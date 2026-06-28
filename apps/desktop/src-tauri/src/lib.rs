@@ -4,7 +4,7 @@ use mdp_core::NoteDocument;
 use mdp_workspace::{
     CreateNoteInput, NoteSummary, SaveNoteInput, SaveResult, WorkspaceHandle, WorkspaceSummary,
 };
-use tauri::{Manager, State};
+use tauri::State;
 
 #[derive(Default)]
 struct AppState {
@@ -60,10 +60,6 @@ pub fn run() {
             get_note,
             save_note
         ])
-        .setup(|app| {
-            let _ = app.handle();
-            Ok(())
-        })
         .run(tauri::generate_context!())
         .expect("error while running MarkdownPlus");
 }
@@ -75,4 +71,3 @@ fn to_command_error(error: anyhow::Error) -> String {
 fn lock_error<T>(error: std::sync::PoisonError<T>) -> String {
     format!("application state lock failed: {error}")
 }
-

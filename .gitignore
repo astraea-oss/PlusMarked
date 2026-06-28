@@ -3,9 +3,9 @@ node_modules/
 build/
 .svelte-kit/
 dist/
+apps/desktop/src-tauri/gen/
 *.log
 *.sqlite
 *.sqlite-shm
 *.sqlite-wal
 .DS_Store
-

@@ -143,7 +143,7 @@
         </label>
       </div>
 
-      <textarea class="body-editor" bind:value={selectedNote.body} aria-label="Markdown body" />
+      <textarea class="body-editor" bind:value={selectedNote.body} aria-label="Markdown body"></textarea>
     {:else}
       <div class="empty-state">
         <h2>Open a workspace</h2>
@@ -320,4 +320,3 @@
     }
   }
 </style>
-
