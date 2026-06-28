@@ -1,0 +1,14 @@
+[package]
+name = "mdp-workspace"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+mdp-core = { path = "../mdp-core" }
+mdp-db = { path = "../mdp-db" }
+serde.workspace = true
+uuid.workspace = true
+

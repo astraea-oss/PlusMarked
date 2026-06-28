@@ -1,0 +1,14 @@
+{
+  "name": "markdownplus-workspace",
+  "private": true,
+  "version": "0.1.0",
+  "license": "AGPL-3.0-only",
+  "scripts": {
+    "desktop:dev": "npm --prefix apps/desktop run tauri dev",
+    "desktop:build": "npm --prefix apps/desktop run tauri build",
+    "desktop:check": "npm --prefix apps/desktop run check",
+    "rust:check": "cargo check --workspace",
+    "rust:test": "cargo test --workspace"
+  }
+}
+

@@ -1,0 +1,11 @@
+target/
+node_modules/
+build/
+.svelte-kit/
+dist/
+*.log
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+.DS_Store
+

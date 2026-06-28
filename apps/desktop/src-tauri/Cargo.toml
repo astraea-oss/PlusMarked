@@ -1,0 +1,25 @@
+[package]
+name = "markdownplus-desktop"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+name = "markdownplus_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[[bin]]
+name = "markdownplus-desktop"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+anyhow.workspace = true
+mdp-core = { path = "../../../crates/mdp-core" }
+mdp-workspace = { path = "../../../crates/mdp-workspace" }
+serde.workspace = true
+serde_json.workspace = true
+tauri = { version = "2", features = [] }
