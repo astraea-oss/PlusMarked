@@ -1418,7 +1418,7 @@
 
   .panel-ribbon {
     display: grid;
-    grid-template-rows: auto minmax(0, 1fr) auto;
+    grid-template-rows: minmax(2.4rem, 1.2fr) minmax(2.4rem, 1fr) minmax(2.4rem, 1.2fr);
     flex: 1 1 auto;
     gap: 0.36rem;
     width: 100%;
@@ -1430,6 +1430,7 @@
     align-content: start;
     gap: 0.32rem;
     min-height: 1rem;
+    min-width: 0;
     width: 100%;
   }
 
@@ -1494,7 +1495,7 @@
 
   .panel-tool-stack {
     display: grid;
-    grid-template-rows: auto minmax(0, 1fr) auto;
+    grid-template-rows: minmax(2.4rem, 1.2fr) minmax(2.4rem, 1fr) minmax(2.4rem, 1.2fr);
     flex: 1 1 auto;
     min-height: 0;
     gap: 0.38rem;
