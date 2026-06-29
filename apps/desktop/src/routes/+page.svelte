@@ -16,6 +16,7 @@
   let status = 'Choose or type a workspace path to begin.';
   let saving = false;
   let browsing = false;
+  let settingsOpen = false;
 
   $: selectedId = selectedNote?.frontmatter.id;
   $: tagText = selectedNote?.frontmatter.tags?.join(', ') ?? '';
@@ -48,6 +49,7 @@
     workspace = await openWorkspace(path);
     notes = await listNotes();
     selectedNote = null;
+    settingsOpen = false;
     status = `Opened ${workspace.root}`;
   }
 
@@ -102,21 +104,6 @@
       </div>
     </div>
 
-    <section class="workspace-panel">
-      <label for="workspace-path">Workspace path</label>
-      <div class="workspace-row">
-        <input
-          id="workspace-path"
-          bind:value={workspacePath}
-          placeholder="/home/lua/MarkdownPlus Workspace"
-        />
-        <button on:click={browseWorkspace} disabled={browsing}>
-          {browsing ? '...' : 'Browse'}
-        </button>
-        <button class="primary" on:click={openCurrentWorkspace}>Open</button>
-      </div>
-    </section>
-
     {#if workspace}
       <section class="notes-header">
         <div>
@@ -138,7 +125,41 @@
           </button>
         {/each}
       </nav>
+    {:else}
+      <div class="sidebar-empty">
+        Open Settings to choose a workspace.
+      </div>
     {/if}
+
+    <div class="sidebar-footer">
+      {#if settingsOpen}
+        <section class="settings-panel">
+          <div class="settings-heading">
+            <h2>Settings</h2>
+            <button class="icon-button" aria-label="Close settings" on:click={() => (settingsOpen = false)}>
+              X
+            </button>
+          </div>
+
+          <label for="workspace-path">Workspace folder</label>
+          <div class="workspace-row">
+            <input
+              id="workspace-path"
+              bind:value={workspacePath}
+              placeholder="/home/lua/MarkdownPlus Workspace"
+            />
+            <button on:click={browseWorkspace} disabled={browsing}>
+              {browsing ? '...' : 'Browse'}
+            </button>
+            <button class="primary" on:click={openCurrentWorkspace}>Open</button>
+          </div>
+        </section>
+      {/if}
+
+      <button class:active={settingsOpen} class="settings-button" on:click={() => (settingsOpen = !settingsOpen)}>
+        Settings
+      </button>
+    </div>
   </aside>
 
   <section class="editor">
@@ -176,7 +197,7 @@
     {:else}
       <div class="empty-state" data-tauri-drag-region>
         <h2>Open a workspace</h2>
-        <p>{status}</p>
+        <p>Use Settings in the sidebar to select a local workspace folder.</p>
       </div>
     {/if}
 
@@ -194,8 +215,8 @@
   }
 
   .sidebar {
-    display: flex;
-    flex-direction: column;
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr) auto;
     gap: 0.72rem;
     border-right: 1px solid #232b36;
     background: #0b0f14;
@@ -219,20 +240,9 @@
     font-size: 0.75rem;
   }
 
-  .workspace-panel {
-    display: grid;
-    gap: 0.34rem;
-  }
-
-  .workspace-panel label {
-    color: #9aa6b2;
-    font-size: 0.72rem;
-    font-weight: 650;
-  }
-
   .workspace-row {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) auto auto;
+    grid-template-columns: minmax(0, 1fr);
     gap: 0.38rem;
   }
 
@@ -256,6 +266,66 @@
     gap: 0.22rem;
     overflow: auto;
     min-height: 0;
+  }
+
+  .sidebar-empty {
+    display: grid;
+    align-content: start;
+    color: #7d8896;
+    font-size: 0.78rem;
+    line-height: 1.35;
+  }
+
+  .sidebar-footer {
+    display: grid;
+    gap: 0.5rem;
+  }
+
+  .settings-panel {
+    display: grid;
+    gap: 0.45rem;
+    border: 1px solid #232b36;
+    border-radius: 6px;
+    background: #0f141b;
+    padding: 0.58rem;
+  }
+
+  .settings-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+  }
+
+  .settings-heading h2 {
+    margin: 0;
+    color: #e6edf3;
+    font-size: 0.82rem;
+  }
+
+  .settings-panel label {
+    color: #9aa6b2;
+    font-size: 0.72rem;
+    font-weight: 650;
+  }
+
+  .settings-button {
+    width: 100%;
+    text-align: left;
+  }
+
+  .settings-button.active {
+    border-color: #2ea987;
+    background: #10211e;
+  }
+
+  .icon-button {
+    display: grid;
+    place-items: center;
+    width: 1.55rem;
+    height: 1.55rem;
+    padding: 0;
+    font-size: 0.72rem;
   }
 
   .note-row {
