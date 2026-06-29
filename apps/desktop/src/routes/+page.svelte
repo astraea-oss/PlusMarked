@@ -589,6 +589,7 @@
     color: #d7dde4;
     line-height: 1.35;
     font-size: 0.9rem;
+    tab-size: 2;
   }
 
   .markdown-preview :global(*) {
@@ -616,11 +617,17 @@
   }
 
   .markdown-preview :global(p),
+  .markdown-preview :global(li),
   .markdown-preview :global(ul),
   .markdown-preview :global(ol),
   .markdown-preview :global(blockquote),
   .markdown-preview :global(pre) {
     margin: 0 0 0.28rem;
+  }
+
+  .markdown-preview :global(p),
+  .markdown-preview :global(li) {
+    white-space: pre-wrap;
   }
 
   .markdown-preview :global(strong) {
