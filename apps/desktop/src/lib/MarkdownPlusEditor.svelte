@@ -24,10 +24,6 @@
   let editorValue = '';
 
   const markdownPlusHighlight = HighlightStyle.define([
-    { tag: tags.heading1, color: '#f0f4f8', fontSize: '1.22em', fontWeight: '760' },
-    { tag: tags.heading2, color: '#f0f4f8', fontSize: '1.12em', fontWeight: '740' },
-    { tag: tags.heading3, color: '#e6edf3', fontSize: '1.04em', fontWeight: '720' },
-    { tag: tags.heading, color: '#e6edf3', fontWeight: '700' },
     { tag: tags.strong, color: '#f0f4f8', fontWeight: '760' },
     { tag: tags.emphasis, color: '#b9c7d5', fontStyle: 'italic' },
     { tag: tags.link, color: '#4fbda0', textDecoration: 'underline' },
@@ -71,6 +67,12 @@
       },
       '.cm-mdp-divider-line': {
         color: '#7d8896'
+      },
+      '.cm-mdp-before-divider, .cm-mdp-before-divider *': {
+        color: '#d7dde4 !important',
+        fontSize: '0.88rem !important',
+        fontStyle: 'normal',
+        fontWeight: '400 !important'
       },
       '.cm-mdp-heading-1': {
         color: '#f0f4f8',
@@ -173,6 +175,12 @@
         const line = editorView.state.doc.lineAt(position);
         if (/^[ \t]*-{3,}[ \t]*$/.test(line.text)) {
           decorations.push(Decoration.line({ class: 'cm-mdp-divider-line' }).range(line.from));
+          if (line.number > 1) {
+            const previousLine = editorView.state.doc.line(line.number - 1);
+            if (previousLine.text.trim() && !/^\s*#{1,3}\s+\S/.test(previousLine.text)) {
+              decorations.push(Decoration.line({ class: 'cm-mdp-before-divider' }).range(previousLine.from));
+            }
+          }
         } else {
           const heading = line.text.match(/^\s*(#{1,3})\s+\S/);
           if (heading) {
