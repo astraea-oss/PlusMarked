@@ -79,7 +79,7 @@
   $: selectedTitle = notes.find((note) => note.id === selectedId)?.title ?? 'Untitled';
   $: leftPanelColumnWidth = leftPanelMode === 'ribbon' ? ribbonPanelWidth : leftPanelWidth;
   $: rightPanelColumnWidth = rightPanelMode === 'ribbon' ? ribbonPanelWidth : rightPanelWidth;
-  $: ribbonTools = buildRibbonTools();
+  $: ribbonTools = buildRibbonTools(toolDocks);
   $: leftRibbonTools = ribbonTools.filter((tool) => tool.dock === 'left');
   $: rightRibbonTools = ribbonTools.filter((tool) => tool.dock === 'right');
   $: outlineItems = extractOutline(extractMarkdownBody(noteSource));
@@ -315,13 +315,13 @@
     };
   }
 
-  function buildRibbonTools(): RibbonTool[] {
+  function buildRibbonTools(docks: ToolDocks): RibbonTool[] {
     return [
-      { id: 'notes', label: 'Notes', dock: toolDocks.notes },
-      { id: 'new-note', label: 'New note', dock: toolDocks['new-note'] },
-      { id: 'settings', label: 'Settings', dock: toolDocks.settings },
-      { id: 'outline', label: 'Outline', dock: toolDocks.outline },
-      { id: 'panel-layout', label: 'Panel layout', dock: toolDocks['panel-layout'] }
+      { id: 'notes', label: 'Notes', dock: docks.notes },
+      { id: 'new-note', label: 'New note', dock: docks['new-note'] },
+      { id: 'settings', label: 'Settings', dock: docks.settings },
+      { id: 'outline', label: 'Outline', dock: docks.outline },
+      { id: 'panel-layout', label: 'Panel layout', dock: docks['panel-layout'] }
     ];
   }
 
@@ -733,13 +733,6 @@
         </div>
       {/if}
 
-      {#if toolDocks.settings === 'left'}
-        <div class="sidebar-footer">
-          <button class:active={settingsOpen} class="settings-button" on:click={() => (settingsOpen = !settingsOpen)}>
-            Settings
-          </button>
-        </div>
-      {/if}
     {/if}
   </aside>
 
@@ -1357,11 +1350,6 @@
     line-height: 1.35;
   }
 
-  .sidebar-footer {
-    display: grid;
-    gap: 0.5rem;
-  }
-
   .settings-view {
     display: grid;
     grid-template-rows: auto minmax(0, 1fr);
@@ -1477,16 +1465,6 @@
     font-size: 0.68rem;
     line-height: 1.3;
     text-overflow: ellipsis;
-  }
-
-  .settings-button {
-    width: 100%;
-    text-align: left;
-  }
-
-  .settings-button.active {
-    border-color: #2ea987;
-    background: #10211e;
   }
 
   .icon-button {
