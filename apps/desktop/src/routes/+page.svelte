@@ -34,6 +34,8 @@
     dock: DockSide;
   };
   type ToolDocks = Record<RibbonToolId, DockSide>;
+  type HudToolId = 'notes' | 'outline';
+  type HudHeights = Record<HudToolId, number>;
   type PropertyRow = {
     key: string;
     value: string;
@@ -48,6 +50,8 @@
   const minRightPanelWidth = 210;
   const maxRightPanelWidth = 420;
   const ribbonPanelWidth = 46;
+  const minHudHeight = 96;
+  const maxHudHeight = 720;
   const defaultToolDocks: ToolDocks = {
     notes: 'left',
     'new-note': 'left',
@@ -55,12 +59,17 @@
     outline: 'right',
     'panel-layout': 'right'
   };
+  const defaultHudHeights: HudHeights = {
+    notes: 320,
+    outline: 190
+  };
 
   let leftPanelWidth = 285;
   let rightPanelWidth = 255;
   let leftPanelMode: PanelMode = 'view';
   let rightPanelMode: PanelMode = 'view';
   let toolDocks: ToolDocks = { ...defaultToolDocks };
+  let hudHeights: HudHeights = { ...defaultHudHeights };
   let workspacePath = '';
   let workspace: WorkspaceSummary | null = null;
   let notes: NoteSummary[] = [];
@@ -82,6 +91,8 @@
   $: ribbonTools = buildRibbonTools(toolDocks);
   $: leftRibbonTools = ribbonTools.filter((tool) => tool.dock === 'left');
   $: rightRibbonTools = ribbonTools.filter((tool) => tool.dock === 'right');
+  $: leftHasHudTool = hasHudTool(leftRibbonTools);
+  $: rightHasHudTool = hasHudTool(rightRibbonTools);
   $: outlineItems = extractOutline(extractMarkdownBody(noteSource));
   $: markdownHtml = DOMPurify.sanitize(
     marked.parse(markdownPlusPreviewSource(extractMarkdownBody(noteSource)), {
@@ -288,6 +299,51 @@
     }
   }
 
+  function startHudResize(event: PointerEvent, tool: HudToolId) {
+    event.preventDefault();
+
+    const startY = event.clientY;
+    const startHeight = hudHeights[tool];
+    document.body.classList.add('is-resizing-hud');
+
+    const resizeHud = (moveEvent: PointerEvent) => {
+      setHudHeight(tool, startHeight + moveEvent.clientY - startY);
+    };
+
+    const stopResize = () => {
+      document.body.classList.remove('is-resizing-hud');
+      window.removeEventListener('pointermove', resizeHud);
+      window.removeEventListener('pointerup', stopResize);
+      window.removeEventListener('pointercancel', stopResize);
+      persistUiSettingsInBackground();
+    };
+
+    window.addEventListener('pointermove', resizeHud);
+    window.addEventListener('pointerup', stopResize);
+    window.addEventListener('pointercancel', stopResize);
+  }
+
+  function handleHudResizeKeydown(event: KeyboardEvent, tool: HudToolId) {
+    if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      setHudHeight(tool, hudHeights[tool] - 16);
+      persistUiSettingsInBackground();
+    }
+
+    if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      setHudHeight(tool, hudHeights[tool] + 16);
+      persistUiSettingsInBackground();
+    }
+  }
+
+  function setHudHeight(tool: HudToolId, height: number) {
+    hudHeights = {
+      ...hudHeights,
+      [tool]: clamp(Math.round(height), minHudHeight, maxHudHeight)
+    };
+  }
+
   function clamp(value: number, min: number, max: number): number {
     return Math.min(max, Math.max(min, value));
   }
@@ -312,6 +368,10 @@
       settings: normalizeDockSide(settings.settings_dock),
       outline: normalizeDockSide(settings.outline_dock),
       'panel-layout': normalizeDockSide(settings.panel_layout_dock)
+    };
+    hudHeights = {
+      notes: clamp(settings.notes_hud_height, minHudHeight, maxHudHeight),
+      outline: clamp(settings.outline_hud_height, minHudHeight, maxHudHeight)
     };
   }
 
@@ -364,6 +424,10 @@
 
   function getToolDock(tool: RibbonToolId): DockSide {
     return toolDocks[tool];
+  }
+
+  function hasHudTool(tools: RibbonTool[]): boolean {
+    return tools.some((tool) => tool.id === 'notes' || tool.id === 'outline');
   }
 
   function toolLabel(tool: RibbonToolId): string {
@@ -436,7 +500,9 @@
       new_note_dock: toolDocks['new-note'],
       settings_dock: toolDocks.settings,
       outline_dock: toolDocks.outline,
-      panel_layout_dock: toolDocks['panel-layout']
+      panel_layout_dock: toolDocks['panel-layout'],
+      notes_hud_height: hudHeights.notes,
+      outline_hud_height: hudHeights.outline
     });
     applyPersistedSettings(settings);
   }
@@ -651,87 +717,105 @@
         </div>
       </div>
 
-      <nav class="panel-tool-bar" aria-label="Left panel tools">
+      <div class="panel-tool-stack" aria-label="Left panel tools">
         {#each leftRibbonTools as tool}
-          <button
-            class:active={(tool.id === 'settings' || tool.id === 'panel-layout') && settingsOpen}
-            class:drag-enabled={true}
-            class="panel-tool-button"
-            aria-label={tool.label}
-            aria-disabled={tool.id === 'new-note' && !workspace}
-            title={`${tool.label} - drag to move`}
-            draggable="true"
-            on:click={() => runRibbonTool(tool.id)}
-            on:dblclick={() => moveToolToOppositeDock(tool.id)}
-            on:dragstart={(event) => handleRibbonDragStart(event, tool.id)}
-          >
-            {#if tool.id === 'notes'}
-              <FileText size={15} />
-            {:else if tool.id === 'new-note'}
-              <Plus size={15} />
-            {:else if tool.id === 'settings'}
-              <Settings size={15} />
-            {:else if tool.id === 'outline'}
-              <ListTree size={15} />
-            {:else}
-              <LayoutPanelLeft size={15} />
-            {/if}
-            <span>{tool.label}</span>
-          </button>
-        {/each}
-      </nav>
-
-      {#if toolDocks.notes === 'left' && workspace}
-        <section class="notes-header">
-          <div>
-            <span class="count">{notes.length}</span>
-            <span>notes</span>
-          </div>
-          <button on:click={createNewNote}>New</button>
-        </section>
-
-        <nav class="notes-list" aria-label="Notes">
-          {#each notes as note}
+          <section class="panel-tool-group">
             <button
-              class:active={note.id === selectedId}
-              class="note-row"
-              on:click={() => {
-                settingsOpen = false;
-                selectNote(note.id);
-              }}
+              class:active={(tool.id === 'settings' || tool.id === 'panel-layout') && settingsOpen}
+              class:drag-enabled={true}
+              class="panel-tool-button"
+              aria-label={tool.label}
+              aria-disabled={tool.id === 'new-note' && !workspace}
+              title={`${tool.label} - drag to move`}
+              draggable="true"
+              on:click={() => runRibbonTool(tool.id)}
+              on:dblclick={() => moveToolToOppositeDock(tool.id)}
+              on:dragstart={(event) => handleRibbonDragStart(event, tool.id)}
             >
-              <span class="note-title">{note.title}</span>
-              <span class="note-meta">{note.note_type} · {new Date(note.updated_at).toLocaleString()}</span>
+              {#if tool.id === 'notes'}
+                <FileText size={15} />
+              {:else if tool.id === 'new-note'}
+                <Plus size={15} />
+              {:else if tool.id === 'settings'}
+                <Settings size={15} />
+              {:else if tool.id === 'outline'}
+                <ListTree size={15} />
+              {:else}
+                <LayoutPanelLeft size={15} />
+              {/if}
+              <span>{tool.label}</span>
             </button>
-          {/each}
-        </nav>
-      {/if}
 
-      {#if toolDocks.outline === 'left'}
-        <div class="right-panel-toolbar">
-          <h2>Outline</h2>
-        </div>
+            {#if tool.id === 'notes'}
+              <div class="tool-hud notes-hud" style={`height: ${hudHeights.notes}px;`}>
+                {#if workspace}
+                  <section class="notes-header">
+                    <div>
+                      <span class="count">{notes.length}</span>
+                      <span>notes</span>
+                    </div>
+                    <button on:click={createNewNote}>New</button>
+                  </section>
 
-        {#if selectedNoteSource && outlineItems.length}
-          <nav class="outline-list" aria-label="Note outline">
-            {#each outlineItems as item}
-              <div class:level-two={item.level === 2} class:level-three={item.level === 3} class="outline-row">
-                {item.text}
+                  <nav class="notes-list" aria-label="Notes">
+                    {#each notes as note}
+                      <button
+                        class:active={note.id === selectedId}
+                        class="note-row"
+                        on:click={() => {
+                          settingsOpen = false;
+                          selectNote(note.id);
+                        }}
+                      >
+                        <span class="note-title">{note.title}</span>
+                        <span class="note-meta">{note.note_type} · {new Date(note.updated_at).toLocaleString()}</span>
+                      </button>
+                    {/each}
+                  </nav>
+                {:else}
+                  <div class="sidebar-empty">Open Settings to choose a workspace.</div>
+                {/if}
               </div>
-            {/each}
-          </nav>
-        {:else}
-          <div class="right-panel-empty">
-            No headings found.
+              <button
+                class="hud-resize-handle"
+                type="button"
+                aria-label="Resize Notes HUD"
+                on:pointerdown={(event) => startHudResize(event, 'notes')}
+                on:keydown={(event) => handleHudResizeKeydown(event, 'notes')}
+              ></button>
+            {:else if tool.id === 'outline'}
+              <div class="tool-hud outline-hud" style={`height: ${hudHeights.outline}px;`}>
+                {#if selectedNoteSource && outlineItems.length}
+                  <nav class="outline-list" aria-label="Note outline">
+                    {#each outlineItems as item}
+                      <div class:level-two={item.level === 2} class:level-three={item.level === 3} class="outline-row">
+                        {item.text}
+                      </div>
+                    {/each}
+                  </nav>
+                {:else}
+                  <div class="right-panel-empty">
+                    No headings found.
+                  </div>
+                {/if}
+              </div>
+              <button
+                class="hud-resize-handle"
+                type="button"
+                aria-label="Resize Outline HUD"
+                on:pointerdown={(event) => startHudResize(event, 'outline')}
+                on:keydown={(event) => handleHudResizeKeydown(event, 'outline')}
+              ></button>
+            {/if}
+          </section>
+        {/each}
+
+        {#if !leftHasHudTool}
+          <div class="sidebar-empty">
+            {workspace ? 'Drop tools here.' : 'Open Settings to choose a workspace.'}
           </div>
         {/if}
-      {/if}
-
-      {#if toolDocks.notes !== 'left' && toolDocks.outline !== 'left'}
-        <div class="sidebar-empty">
-          {workspace ? 'Drop tools here.' : 'Open Settings to choose a workspace.'}
-        </div>
-      {/if}
+      </div>
 
     {/if}
   </aside>
@@ -993,85 +1077,105 @@
         {/each}
       </nav>
     {:else}
-      <nav class="panel-tool-bar" aria-label="Right panel tools">
+      <div class="panel-tool-stack" aria-label="Right panel tools">
         {#each rightRibbonTools as tool}
-          <button
-            class:active={(tool.id === 'settings' || tool.id === 'panel-layout') && settingsOpen}
-            class:drag-enabled={true}
-            class="panel-tool-button"
-            aria-label={tool.label}
-            aria-disabled={tool.id === 'new-note' && !workspace}
-            title={`${tool.label} - drag to move`}
-            draggable="true"
-            on:click={() => runRibbonTool(tool.id)}
-            on:dblclick={() => moveToolToOppositeDock(tool.id)}
-            on:dragstart={(event) => handleRibbonDragStart(event, tool.id)}
-          >
-            {#if tool.id === 'notes'}
-              <FileText size={15} />
-            {:else if tool.id === 'new-note'}
-              <Plus size={15} />
-            {:else if tool.id === 'settings'}
-              <Settings size={15} />
-            {:else if tool.id === 'outline'}
-              <ListTree size={15} />
-            {:else}
-              <LayoutPanelLeft size={15} />
-            {/if}
-            <span>{tool.label}</span>
-          </button>
-        {/each}
-      </nav>
-
-      {#if toolDocks.notes === 'right' && workspace}
-        <section class="notes-header">
-          <div>
-            <span class="count">{notes.length}</span>
-            <span>notes</span>
-          </div>
-          <button on:click={createNewNote}>New</button>
-        </section>
-
-        <nav class="notes-list" aria-label="Notes">
-          {#each notes as note}
+          <section class="panel-tool-group">
             <button
-              class:active={note.id === selectedId}
-              class="note-row"
-              on:click={() => {
-                settingsOpen = false;
-                selectNote(note.id);
-              }}
+              class:active={(tool.id === 'settings' || tool.id === 'panel-layout') && settingsOpen}
+              class:drag-enabled={true}
+              class="panel-tool-button"
+              aria-label={tool.label}
+              aria-disabled={tool.id === 'new-note' && !workspace}
+              title={`${tool.label} - drag to move`}
+              draggable="true"
+              on:click={() => runRibbonTool(tool.id)}
+              on:dblclick={() => moveToolToOppositeDock(tool.id)}
+              on:dragstart={(event) => handleRibbonDragStart(event, tool.id)}
             >
-              <span class="note-title">{note.title}</span>
-              <span class="note-meta">{note.note_type} · {new Date(note.updated_at).toLocaleString()}</span>
+              {#if tool.id === 'notes'}
+                <FileText size={15} />
+              {:else if tool.id === 'new-note'}
+                <Plus size={15} />
+              {:else if tool.id === 'settings'}
+                <Settings size={15} />
+              {:else if tool.id === 'outline'}
+                <ListTree size={15} />
+              {:else}
+                <LayoutPanelLeft size={15} />
+              {/if}
+              <span>{tool.label}</span>
             </button>
-          {/each}
-        </nav>
-      {/if}
 
-      {#if toolDocks.outline === 'right'}
-        <div class="right-panel-toolbar" data-tauri-drag-region>
-          <h2>Outline</h2>
-        </div>
+            {#if tool.id === 'notes'}
+              <div class="tool-hud notes-hud" style={`height: ${hudHeights.notes}px;`}>
+                {#if workspace}
+                  <section class="notes-header">
+                    <div>
+                      <span class="count">{notes.length}</span>
+                      <span>notes</span>
+                    </div>
+                    <button on:click={createNewNote}>New</button>
+                  </section>
 
-        {#if selectedNoteSource && outlineItems.length}
-          <nav class="outline-list" aria-label="Note outline">
-            {#each outlineItems as item}
-              <div class:level-two={item.level === 2} class:level-three={item.level === 3} class="outline-row">
-                {item.text}
+                  <nav class="notes-list" aria-label="Notes">
+                    {#each notes as note}
+                      <button
+                        class:active={note.id === selectedId}
+                        class="note-row"
+                        on:click={() => {
+                          settingsOpen = false;
+                          selectNote(note.id);
+                        }}
+                      >
+                        <span class="note-title">{note.title}</span>
+                        <span class="note-meta">{note.note_type} · {new Date(note.updated_at).toLocaleString()}</span>
+                      </button>
+                    {/each}
+                  </nav>
+                {:else}
+                  <div class="sidebar-empty">Open Settings to choose a workspace.</div>
+                {/if}
               </div>
-            {/each}
-          </nav>
-        {:else}
+              <button
+                class="hud-resize-handle"
+                type="button"
+                aria-label="Resize Notes HUD"
+                on:pointerdown={(event) => startHudResize(event, 'notes')}
+                on:keydown={(event) => handleHudResizeKeydown(event, 'notes')}
+              ></button>
+            {:else if tool.id === 'outline'}
+              <div class="tool-hud outline-hud" style={`height: ${hudHeights.outline}px;`}>
+                {#if selectedNoteSource && outlineItems.length}
+                  <nav class="outline-list" aria-label="Note outline">
+                    {#each outlineItems as item}
+                      <div class:level-two={item.level === 2} class:level-three={item.level === 3} class="outline-row">
+                        {item.text}
+                      </div>
+                    {/each}
+                  </nav>
+                {:else}
+                  <div class="right-panel-empty">
+                    No headings found.
+                  </div>
+                {/if}
+              </div>
+              <button
+                class="hud-resize-handle"
+                type="button"
+                aria-label="Resize Outline HUD"
+                on:pointerdown={(event) => startHudResize(event, 'outline')}
+                on:keydown={(event) => handleHudResizeKeydown(event, 'outline')}
+              ></button>
+            {/if}
+          </section>
+        {/each}
+
+        {#if !rightHasHudTool}
           <div class="right-panel-empty">
-            No headings found.
+            Drop tools here.
           </div>
         {/if}
-      {:else if toolDocks.notes !== 'right'}
-        <div class="right-panel-empty">
-          Drop tools here.
-        </div>
-      {/if}
+      </div>
     {/if}
   </aside>
 </main>
@@ -1142,10 +1246,19 @@
     opacity: 0.42;
   }
 
-  .panel-tool-bar {
+  .panel-tool-stack {
+    display: flex;
+    flex: 1 1 auto;
+    min-height: 0;
+    flex-direction: column;
+    gap: 0.38rem;
+    overflow: auto;
+  }
+
+  .panel-tool-group {
     display: grid;
-    gap: 0.24rem;
-    align-content: start;
+    gap: 0.16rem;
+    min-height: 0;
   }
 
   .panel-tool-button {
@@ -1182,6 +1295,37 @@
 
   .panel-tool-button.drag-enabled:active {
     cursor: grabbing;
+  }
+
+  .tool-hud {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    gap: 0.34rem;
+    min-height: 0;
+    overflow: hidden;
+    padding: 0.22rem 0 0.08rem 1.42rem;
+  }
+
+  .outline-hud {
+    grid-template-rows: minmax(0, 1fr);
+  }
+
+  .hud-resize-handle {
+    width: calc(100% - 1.42rem);
+    height: 5px;
+    min-height: 5px;
+    justify-self: end;
+    border: 0;
+    border-radius: 0;
+    background: linear-gradient(to bottom, transparent 0 2px, #232b36 2px 3px, transparent 3px 5px);
+    cursor: row-resize;
+    padding: 0;
+  }
+
+  .hud-resize-handle:hover,
+  .hud-resize-handle:focus {
+    background: linear-gradient(to bottom, transparent 0 2px, #2ea987 2px 3px, transparent 3px 5px);
+    outline: none;
   }
 
   .panel-resize-handle {
@@ -1232,6 +1376,12 @@
     user-select: none !important;
   }
 
+  :global(body.is-resizing-hud),
+  :global(body.is-resizing-hud *) {
+    cursor: row-resize !important;
+    user-select: none !important;
+  }
+
   .right-panel {
     display: flex;
     flex-direction: column;
@@ -1241,19 +1391,6 @@
     padding: 0.72rem 0.64rem;
     min-width: 0;
     min-height: 0;
-  }
-
-  .right-panel-toolbar {
-    display: flex;
-    align-items: center;
-    min-height: 1.7rem;
-  }
-
-  .right-panel-toolbar h2 {
-    margin: 0;
-    color: #d7dde4;
-    font-size: 0.78rem;
-    font-weight: 650;
   }
 
   .outline-list {
@@ -1292,6 +1429,8 @@
   }
 
   .right-panel-empty {
+    display: grid;
+    align-content: start;
     color: #687586;
     font-size: 0.76rem;
     line-height: 1.35;

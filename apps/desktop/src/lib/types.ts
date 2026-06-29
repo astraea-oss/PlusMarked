@@ -15,6 +15,8 @@ export type AppSettings = {
   settings_dock: DockSide;
   outline_dock: DockSide;
   panel_layout_dock: DockSide;
+  notes_hud_height: number;
+  outline_hud_height: number;
 };
 
 export type PanelMode = 'view' | 'ribbon';
@@ -30,6 +32,8 @@ export type UpdateAppSettingsInput = {
   settings_dock: DockSide;
   outline_dock: DockSide;
   panel_layout_dock: DockSide;
+  notes_hud_height: number;
+  outline_hud_height: number;
 };
 
 export type NoteSummary = {

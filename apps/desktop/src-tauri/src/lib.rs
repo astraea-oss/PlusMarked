@@ -38,6 +38,10 @@ struct AppSettings {
     outline_dock: String,
     #[serde(default = "default_right_dock")]
     panel_layout_dock: String,
+    #[serde(default = "default_notes_hud_height")]
+    notes_hud_height: u16,
+    #[serde(default = "default_outline_hud_height")]
+    outline_hud_height: u16,
 }
 
 impl Default for AppSettings {
@@ -53,6 +57,8 @@ impl Default for AppSettings {
             settings_dock: default_left_dock(),
             outline_dock: default_right_dock(),
             panel_layout_dock: default_right_dock(),
+            notes_hud_height: default_notes_hud_height(),
+            outline_hud_height: default_outline_hud_height(),
         }
     }
 }
@@ -70,6 +76,8 @@ struct AppSettingsSummary {
     settings_dock: String,
     outline_dock: String,
     panel_layout_dock: String,
+    notes_hud_height: u16,
+    outline_hud_height: u16,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -83,6 +91,8 @@ struct UpdateAppSettingsInput {
     settings_dock: String,
     outline_dock: String,
     panel_layout_dock: String,
+    notes_hud_height: u16,
+    outline_hud_height: u16,
 }
 
 impl AppState {
@@ -128,6 +138,8 @@ fn get_app_settings(state: State<'_, AppState>) -> Result<AppSettingsSummary, St
         settings_dock: settings.settings_dock,
         outline_dock: settings.outline_dock,
         panel_layout_dock: settings.panel_layout_dock,
+        notes_hud_height: settings.notes_hud_height,
+        outline_hud_height: settings.outline_hud_height,
     })
 }
 
@@ -147,6 +159,8 @@ fn update_app_settings(
         settings.settings_dock = normalize_dock_side(&input.settings_dock).to_string();
         settings.outline_dock = normalize_dock_side(&input.outline_dock).to_string();
         settings.panel_layout_dock = normalize_dock_side(&input.panel_layout_dock).to_string();
+        settings.notes_hud_height = input.notes_hud_height.clamp(96, 720);
+        settings.outline_hud_height = input.outline_hud_height.clamp(96, 720);
     }
 
     state.save_settings()?;
@@ -259,6 +273,14 @@ fn default_left_dock() -> String {
 
 fn default_right_dock() -> String {
     "right".to_string()
+}
+
+fn default_notes_hud_height() -> u16 {
+    320
+}
+
+fn default_outline_hud_height() -> u16 {
+    190
 }
 
 fn normalize_panel_mode(mode: &str) -> &str {
