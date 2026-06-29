@@ -753,7 +753,14 @@
   .live-body-editor {
     border-color: transparent;
     background: transparent;
-    padding: 0.18rem 0 0;
+    border-radius: 0;
+    padding: 0.14rem 0 0;
+    box-shadow: none;
+  }
+
+  .live-body-editor:focus {
+    border-color: transparent;
+    box-shadow: none;
   }
 
   .add-property-button {
