@@ -13,19 +13,25 @@
   } from '$lib/api';
   import type { NoteSource, NoteSummary, WorkspaceSummary } from '$lib/types';
 
-  type EditorMode = 'write' | 'split' | 'preview';
+  type EditorMode = 'live' | 'source' | 'split' | 'preview';
+  type PropertyRow = {
+    key: string;
+    value: string;
+  };
 
   let workspacePath = '';
   let workspace: WorkspaceSummary | null = null;
   let notes: NoteSummary[] = [];
   let selectedNoteSource: NoteSource | null = null;
   let noteSource = '';
+  let liveBody = '';
+  let propertyRows: PropertyRow[] = [];
   let status = 'Choose or type a workspace path to begin.';
   let portableRoot = '';
   let saving = false;
   let browsing = false;
   let settingsOpen = false;
-  let editorMode: EditorMode = 'split';
+  let editorMode: EditorMode = 'live';
 
   $: selectedId = selectedNoteSource?.id;
   $: selectedTitle = notes.find((note) => note.id === selectedId)?.title ?? 'Untitled';
@@ -96,6 +102,7 @@
   async function selectNote(id: string) {
     selectedNoteSource = await getNoteSource(id);
     noteSource = selectedNoteSource.source;
+    syncLiveFieldsFromSource();
     status = 'Note loaded.';
   }
 
@@ -104,6 +111,10 @@
 
     saving = true;
     try {
+      if (editorMode === 'live') {
+        updateSourceFromLiveFields();
+      }
+
       const result = await saveNoteSource({
         id: selectedNoteSource.id,
         source: noteSource
@@ -135,7 +146,68 @@
     return source.replace(/^[ \t]*-{3,}[ \t]*$/gm, '\n<hr data-mdp-rule="underline">\n');
   }
 
-  function handleEditorKeydown(event: KeyboardEvent) {
+  function syncLiveFieldsFromSource() {
+    const split = splitMarkdownPlusSource(noteSource);
+    liveBody = split.body;
+    propertyRows = split.frontmatter
+      .split(/\r?\n/)
+      .map((line) => line.match(/^([A-Za-z0-9_-]+):\s*(.*)$/))
+      .filter((match): match is RegExpMatchArray => Boolean(match))
+      .map((match) => ({
+        key: match[1],
+        value: match[2] ?? ''
+      }));
+  }
+
+  function updateSourceFromLiveFields() {
+    const yaml = propertyRows
+      .filter((property) => property.key.trim())
+      .map((property) => `${property.key.trim()}: ${property.value}`)
+      .join('\n');
+
+    noteSource = `---\n${yaml}\n---\n${liveBody}`;
+  }
+
+  function updateProperty(index: number, field: keyof PropertyRow, value: string) {
+    propertyRows = propertyRows.map((property, propertyIndex) =>
+      propertyIndex === index ? { ...property, [field]: value } : property
+    );
+    updateSourceFromLiveFields();
+  }
+
+  function addProperty() {
+    propertyRows = [...propertyRows, { key: 'property', value: 'value' }];
+    updateSourceFromLiveFields();
+  }
+
+  function removeProperty(index: number) {
+    propertyRows = propertyRows.filter((_, propertyIndex) => propertyIndex !== index);
+    updateSourceFromLiveFields();
+  }
+
+  function updateLiveBody(value: string) {
+    liveBody = value;
+    updateSourceFromLiveFields();
+  }
+
+  function splitMarkdownPlusSource(source: string): { frontmatter: string; body: string } {
+    if (!source.startsWith('---')) {
+      return { frontmatter: '', body: source };
+    }
+
+    const delimiter = source.indexOf('\n---', 3);
+    if (delimiter === -1) {
+      return { frontmatter: '', body: source };
+    }
+
+    const frontmatterStart = source.startsWith('---\r\n') ? 5 : 4;
+    return {
+      frontmatter: source.slice(frontmatterStart, delimiter),
+      body: source.slice(delimiter + 4).replace(/^\r?\n+/, '')
+    };
+  }
+
+  function handleEditorKeydown(event: KeyboardEvent, target: 'source' | 'body' = 'source') {
     if (event.key !== 'Tab') {
       return;
     }
@@ -146,40 +218,65 @@
     const selectionEnd = textarea.selectionEnd;
 
     if (event.shiftKey) {
-      outdentSelection(textarea, selectionStart, selectionEnd);
+      outdentSelection(textarea, selectionStart, selectionEnd, target);
       return;
     }
 
-    indentSelection(textarea, selectionStart, selectionEnd);
+    indentSelection(textarea, selectionStart, selectionEnd, target);
   }
 
-  function indentSelection(textarea: HTMLTextAreaElement, selectionStart: number, selectionEnd: number) {
+  function handleSourceInput(value: string) {
+    noteSource = value;
+    syncLiveFieldsFromSource();
+  }
+
+  function setEditorText(target: 'source' | 'body', value: string) {
+    if (target === 'body') {
+      updateLiveBody(value);
+      return;
+    }
+
+    handleSourceInput(value);
+  }
+
+  function indentSelection(
+    textarea: HTMLTextAreaElement,
+    selectionStart: number,
+    selectionEnd: number,
+    target: 'source' | 'body'
+  ) {
     const indent = '  ';
+    const text = target === 'body' ? liveBody : noteSource;
 
     if (selectionStart === selectionEnd) {
-      noteSource =
-        noteSource.slice(0, selectionStart) + indent + noteSource.slice(selectionEnd);
+      setEditorText(target, text.slice(0, selectionStart) + indent + text.slice(selectionEnd));
       queueSelection(textarea, selectionStart + indent.length, selectionStart + indent.length);
       return;
     }
 
-    const lineStart = noteSource.lastIndexOf('\n', selectionStart - 1) + 1;
-    const selected = noteSource.slice(lineStart, selectionEnd);
+    const lineStart = text.lastIndexOf('\n', selectionStart - 1) + 1;
+    const selected = text.slice(lineStart, selectionEnd);
     const indented = selected.replace(/^/gm, indent);
-    noteSource = noteSource.slice(0, lineStart) + indented + noteSource.slice(selectionEnd);
+    setEditorText(target, text.slice(0, lineStart) + indented + text.slice(selectionEnd));
     queueSelection(textarea, selectionStart + indent.length, selectionEnd + indented.length - selected.length);
   }
 
-  function outdentSelection(textarea: HTMLTextAreaElement, selectionStart: number, selectionEnd: number) {
-    const lineStart = noteSource.lastIndexOf('\n', selectionStart - 1) + 1;
-    const selected = noteSource.slice(lineStart, selectionEnd);
+  function outdentSelection(
+    textarea: HTMLTextAreaElement,
+    selectionStart: number,
+    selectionEnd: number,
+    target: 'source' | 'body'
+  ) {
+    const text = target === 'body' ? liveBody : noteSource;
+    const lineStart = text.lastIndexOf('\n', selectionStart - 1) + 1;
+    const selected = text.slice(lineStart, selectionEnd);
     const outdented = selected.replace(/^( {1,2}|\t)/gm, '');
     const removedBeforeSelection = selected
       .slice(0, selectionStart - lineStart)
       .match(/^( {1,2}|\t)/gm)
       ?.join('').length ?? 0;
 
-    noteSource = noteSource.slice(0, lineStart) + outdented + noteSource.slice(selectionEnd);
+    setEditorText(target, text.slice(0, lineStart) + outdented + text.slice(selectionEnd));
 
     const removedTotal = selected.length - outdented.length;
     queueSelection(
@@ -286,11 +383,18 @@
       <div class="editor-toolbar">
         <div class="mode-group" aria-label="Editor mode">
           <button
-            class:active={editorMode === 'write'}
+            class:active={editorMode === 'live'}
             class="mode-button"
-            on:click={() => (editorMode = 'write')}
+            on:click={() => (editorMode = 'live')}
           >
-            Write
+            Live
+          </button>
+          <button
+            class:active={editorMode === 'source'}
+            class="mode-button"
+            on:click={() => (editorMode = 'source')}
+          >
+            Source
           </button>
           <button
             class:active={editorMode === 'split'}
@@ -309,22 +413,66 @@
         </div>
       </div>
 
-      <div class:preview-only={editorMode === 'preview'} class:write-only={editorMode === 'write'} class="body-shell">
-        {#if editorMode !== 'preview'}
+      {#if editorMode === 'live'}
+        <div class="live-editor">
+          <section class="live-properties" aria-label="Properties">
+            <div class="live-properties-header">
+              <h3>Properties</h3>
+              <button on:click={addProperty}>Add property</button>
+            </div>
+
+            <div class="property-list">
+              {#each propertyRows as property, index}
+                <div class="property-row">
+                  <input
+                    aria-label="Property name"
+                    value={property.key}
+                    on:input={(event) => updateProperty(index, 'key', event.currentTarget.value)}
+                  />
+                  <input
+                    aria-label="Property value"
+                    value={property.value}
+                    on:input={(event) => updateProperty(index, 'value', event.currentTarget.value)}
+                  />
+                  <button class="icon-button" aria-label="Remove property" on:click={() => removeProperty(index)}>
+                    X
+                  </button>
+                </div>
+              {/each}
+            </div>
+          </section>
+
+          <textarea
+            class="body-editor live-body-editor"
+            value={liveBody}
+            aria-label="MarkdownPlus body"
+            on:input={(event) => updateLiveBody(event.currentTarget.value)}
+            on:keydown={(event) => handleEditorKeydown(event, 'body')}
+          ></textarea>
+        </div>
+      {:else}
+        <div
+          class:preview-only={editorMode === 'preview'}
+          class:source-only={editorMode === 'source'}
+          class="body-shell"
+        >
+          {#if editorMode !== 'preview'}
           <textarea
             class="body-editor"
-            bind:value={noteSource}
+            value={noteSource}
             aria-label="MarkdownPlus source"
+            on:input={(event) => handleSourceInput(event.currentTarget.value)}
             on:keydown={handleEditorKeydown}
           ></textarea>
-        {/if}
+          {/if}
 
-        {#if editorMode !== 'write'}
+          {#if editorMode !== 'source'}
           <article class="markdown-preview">
             {@html markdownHtml}
           </article>
-        {/if}
-      </div>
+          {/if}
+        </div>
+      {/if}
     {:else}
       <div class="empty-state" data-tauri-drag-region>
         <h2>Open a workspace</h2>
@@ -535,7 +683,7 @@
 
   .mode-group {
     display: inline-grid;
-    grid-template-columns: repeat(3, auto);
+    grid-template-columns: repeat(4, auto);
     gap: 0.22rem;
     border: 1px solid #232b36;
     border-radius: 6px;
@@ -562,9 +710,70 @@
     min-height: 0;
   }
 
-  .body-shell.write-only,
+  .body-shell.source-only,
   .body-shell.preview-only {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .live-editor {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    gap: 0.6rem;
+    min-height: 0;
+  }
+
+  .live-properties {
+    display: grid;
+    gap: 0.42rem;
+    border-bottom: 1px solid #232b36;
+    padding-bottom: 0.55rem;
+  }
+
+  .live-properties-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+  }
+
+  .live-properties-header h3 {
+    margin: 0;
+    color: #c6d0dc;
+    font-size: 0.82rem;
+    font-weight: 650;
+  }
+
+  .property-list {
+    display: grid;
+    gap: 0.28rem;
+  }
+
+  .property-row {
+    display: grid;
+    grid-template-columns: minmax(6rem, 0.35fr) minmax(0, 1fr) auto;
+    gap: 0.36rem;
+    align-items: center;
+  }
+
+  .property-row input {
+    border-color: transparent;
+    background: transparent;
+    padding: 0.22rem 0.28rem;
+  }
+
+  .property-row input:first-child {
+    color: #8d98a6;
+  }
+
+  .property-row input:focus {
+    border-color: #303946;
+    background: #0b0f14;
+  }
+
+  .live-body-editor {
+    border-color: transparent;
+    background: transparent;
+    padding: 0;
   }
 
   .body-editor {
