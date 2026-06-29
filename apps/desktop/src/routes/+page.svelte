@@ -33,6 +33,7 @@
     label: string;
     dock: DockSide;
   };
+  type ToolDocks = Record<RibbonToolId, DockSide>;
   type PropertyRow = {
     key: string;
     value: string;
@@ -47,16 +48,19 @@
   const minRightPanelWidth = 210;
   const maxRightPanelWidth = 420;
   const ribbonPanelWidth = 46;
+  const defaultToolDocks: ToolDocks = {
+    notes: 'left',
+    'new-note': 'left',
+    settings: 'left',
+    outline: 'right',
+    'panel-layout': 'right'
+  };
 
   let leftPanelWidth = 285;
   let rightPanelWidth = 255;
   let leftPanelMode: PanelMode = 'view';
   let rightPanelMode: PanelMode = 'view';
-  let notesDock: DockSide = 'left';
-  let newNoteDock: DockSide = 'left';
-  let settingsDock: DockSide = 'left';
-  let outlineDock: DockSide = 'right';
-  let panelLayoutDock: DockSide = 'right';
+  let toolDocks: ToolDocks = { ...defaultToolDocks };
   let workspacePath = '';
   let workspace: WorkspaceSummary | null = null;
   let notes: NoteSummary[] = [];
@@ -88,16 +92,7 @@
 
   onMount(async () => {
     const settings = await getAppSettings();
-    portableRoot = settings.portable_root;
-    leftPanelWidth = clamp(settings.left_panel_width, minLeftPanelWidth, maxLeftPanelWidth);
-    rightPanelWidth = clamp(settings.right_panel_width, minRightPanelWidth, maxRightPanelWidth);
-    leftPanelMode = normalizePanelMode(settings.left_panel_mode);
-    rightPanelMode = normalizePanelMode(settings.right_panel_mode);
-    notesDock = normalizeDockSide(settings.notes_dock);
-    newNoteDock = normalizeDockSide(settings.new_note_dock);
-    settingsDock = normalizeDockSide(settings.settings_dock);
-    outlineDock = normalizeDockSide(settings.outline_dock);
-    panelLayoutDock = normalizeDockSide(settings.panel_layout_dock);
+    applyPersistedSettings(settings);
 
     if (settings.last_workspace_path) {
       workspacePath = settings.last_workspace_path;
@@ -228,7 +223,7 @@
       window.removeEventListener('pointermove', resizePanel);
       window.removeEventListener('pointerup', stopResize);
       window.removeEventListener('pointercancel', stopResize);
-      persistUiSettings();
+      persistUiSettingsInBackground();
     };
 
     window.addEventListener('pointermove', resizePanel);
@@ -242,13 +237,13 @@
     if (event.key === 'ArrowLeft') {
       event.preventDefault();
       leftPanelWidth = clamp(leftPanelWidth - 12, minLeftPanelWidth, maxLeftPanelWidth);
-      persistUiSettings();
+      persistUiSettingsInBackground();
     }
 
     if (event.key === 'ArrowRight') {
       event.preventDefault();
       leftPanelWidth = clamp(leftPanelWidth + 12, minLeftPanelWidth, maxLeftPanelWidth);
-      persistUiSettings();
+      persistUiSettingsInBackground();
     }
   }
 
@@ -269,7 +264,7 @@
       window.removeEventListener('pointermove', resizePanel);
       window.removeEventListener('pointerup', stopResize);
       window.removeEventListener('pointercancel', stopResize);
-      persistUiSettings();
+      persistUiSettingsInBackground();
     };
 
     window.addEventListener('pointermove', resizePanel);
@@ -283,13 +278,13 @@
     if (event.key === 'ArrowLeft') {
       event.preventDefault();
       rightPanelWidth = clamp(rightPanelWidth + 12, minRightPanelWidth, maxRightPanelWidth);
-      persistUiSettings();
+      persistUiSettingsInBackground();
     }
 
     if (event.key === 'ArrowRight') {
       event.preventDefault();
       rightPanelWidth = clamp(rightPanelWidth - 12, minRightPanelWidth, maxRightPanelWidth);
-      persistUiSettings();
+      persistUiSettingsInBackground();
     }
   }
 
@@ -305,35 +300,61 @@
     return side === 'right' ? 'right' : 'left';
   }
 
+  function applyPersistedSettings(settings: Awaited<ReturnType<typeof getAppSettings>>) {
+    portableRoot = settings.portable_root;
+    leftPanelWidth = clamp(settings.left_panel_width, minLeftPanelWidth, maxLeftPanelWidth);
+    rightPanelWidth = clamp(settings.right_panel_width, minRightPanelWidth, maxRightPanelWidth);
+    leftPanelMode = normalizePanelMode(settings.left_panel_mode);
+    rightPanelMode = normalizePanelMode(settings.right_panel_mode);
+    toolDocks = {
+      notes: normalizeDockSide(settings.notes_dock),
+      'new-note': normalizeDockSide(settings.new_note_dock),
+      settings: normalizeDockSide(settings.settings_dock),
+      outline: normalizeDockSide(settings.outline_dock),
+      'panel-layout': normalizeDockSide(settings.panel_layout_dock)
+    };
+  }
+
   function buildRibbonTools(): RibbonTool[] {
     return [
-      { id: 'notes', label: 'Notes', dock: notesDock },
-      { id: 'new-note', label: 'New note', dock: newNoteDock },
-      { id: 'settings', label: 'Settings', dock: settingsDock },
-      { id: 'outline', label: 'Outline', dock: outlineDock },
-      { id: 'panel-layout', label: 'Panel layout', dock: panelLayoutDock }
+      { id: 'notes', label: 'Notes', dock: toolDocks.notes },
+      { id: 'new-note', label: 'New note', dock: toolDocks['new-note'] },
+      { id: 'settings', label: 'Settings', dock: toolDocks.settings },
+      { id: 'outline', label: 'Outline', dock: toolDocks.outline },
+      { id: 'panel-layout', label: 'Panel layout', dock: toolDocks['panel-layout'] }
     ];
   }
 
   async function setPanelMode(panel: 'left' | 'right', mode: PanelMode) {
+    const previousLeftPanelMode = leftPanelMode;
+    const previousRightPanelMode = rightPanelMode;
+
     if (panel === 'left') {
       leftPanelMode = mode;
     } else {
       rightPanelMode = mode;
     }
 
-    await persistUiSettings();
+    try {
+      await persistUiSettings();
+    } catch (error) {
+      leftPanelMode = previousLeftPanelMode;
+      rightPanelMode = previousRightPanelMode;
+      status = error instanceof Error ? error.message : String(error);
+    }
   }
 
   async function setToolDock(tool: RibbonToolId, side: DockSide) {
-    if (tool === 'notes') notesDock = side;
-    if (tool === 'new-note') newNoteDock = side;
-    if (tool === 'settings') settingsDock = side;
-    if (tool === 'outline') outlineDock = side;
-    if (tool === 'panel-layout') panelLayoutDock = side;
+    const previousToolDocks = toolDocks;
+    toolDocks = { ...toolDocks, [tool]: side };
 
-    await persistUiSettings();
-    status = `${toolLabel(tool)} moved to ${side} panel.`;
+    try {
+      await persistUiSettings();
+      status = `${toolLabel(tool)} moved to ${side} panel.`;
+    } catch (error) {
+      toolDocks = previousToolDocks;
+      status = error instanceof Error ? error.message : String(error);
+    }
   }
 
   async function moveToolToOppositeDock(tool: RibbonToolId) {
@@ -342,11 +363,7 @@
   }
 
   function getToolDock(tool: RibbonToolId): DockSide {
-    if (tool === 'notes') return notesDock;
-    if (tool === 'new-note') return newNoteDock;
-    if (tool === 'settings') return settingsDock;
-    if (tool === 'outline') return outlineDock;
-    return panelLayoutDock;
+    return toolDocks[tool];
   }
 
   function toolLabel(tool: RibbonToolId): string {
@@ -410,30 +427,24 @@
   }
 
   async function persistUiSettings() {
-    try {
-      const settings = await updateAppSettings({
-        left_panel_width: Math.round(leftPanelWidth),
-        right_panel_width: Math.round(rightPanelWidth),
-        left_panel_mode: leftPanelMode,
-        right_panel_mode: rightPanelMode,
-        notes_dock: notesDock,
-        new_note_dock: newNoteDock,
-        settings_dock: settingsDock,
-        outline_dock: outlineDock,
-        panel_layout_dock: panelLayoutDock
-      });
-      leftPanelWidth = clamp(settings.left_panel_width, minLeftPanelWidth, maxLeftPanelWidth);
-      rightPanelWidth = clamp(settings.right_panel_width, minRightPanelWidth, maxRightPanelWidth);
-      leftPanelMode = normalizePanelMode(settings.left_panel_mode);
-      rightPanelMode = normalizePanelMode(settings.right_panel_mode);
-      notesDock = normalizeDockSide(settings.notes_dock);
-      newNoteDock = normalizeDockSide(settings.new_note_dock);
-      settingsDock = normalizeDockSide(settings.settings_dock);
-      outlineDock = normalizeDockSide(settings.outline_dock);
-      panelLayoutDock = normalizeDockSide(settings.panel_layout_dock);
-    } catch (error) {
+    const settings = await updateAppSettings({
+      left_panel_width: Math.round(leftPanelWidth),
+      right_panel_width: Math.round(rightPanelWidth),
+      left_panel_mode: leftPanelMode,
+      right_panel_mode: rightPanelMode,
+      notes_dock: toolDocks.notes,
+      new_note_dock: toolDocks['new-note'],
+      settings_dock: toolDocks.settings,
+      outline_dock: toolDocks.outline,
+      panel_layout_dock: toolDocks['panel-layout']
+    });
+    applyPersistedSettings(settings);
+  }
+
+  function persistUiSettingsInBackground() {
+    void persistUiSettings().catch((error) => {
       status = error instanceof Error ? error.message : String(error);
-    }
+    });
   }
 
   function syncLiveFieldsFromSource() {
@@ -670,7 +681,7 @@
         {/each}
       </nav>
 
-      {#if notesDock === 'left' && workspace}
+      {#if toolDocks.notes === 'left' && workspace}
         <section class="notes-header">
           <div>
             <span class="count">{notes.length}</span>
@@ -696,7 +707,7 @@
         </nav>
       {/if}
 
-      {#if outlineDock === 'left'}
+      {#if toolDocks.outline === 'left'}
         <div class="right-panel-toolbar">
           <h2>Outline</h2>
         </div>
@@ -716,13 +727,13 @@
         {/if}
       {/if}
 
-      {#if notesDock !== 'left' && outlineDock !== 'left'}
+      {#if toolDocks.notes !== 'left' && toolDocks.outline !== 'left'}
         <div class="sidebar-empty">
           {workspace ? 'Drop tools here.' : 'Open Settings to choose a workspace.'}
         </div>
       {/if}
 
-      {#if settingsDock === 'left'}
+      {#if toolDocks.settings === 'left'}
         <div class="sidebar-footer">
           <button class:active={settingsOpen} class="settings-button" on:click={() => (settingsOpen = !settingsOpen)}>
             Settings
@@ -1019,7 +1030,7 @@
         {/each}
       </nav>
 
-      {#if notesDock === 'right' && workspace}
+      {#if toolDocks.notes === 'right' && workspace}
         <section class="notes-header">
           <div>
             <span class="count">{notes.length}</span>
@@ -1045,7 +1056,7 @@
         </nav>
       {/if}
 
-      {#if outlineDock === 'right'}
+      {#if toolDocks.outline === 'right'}
         <div class="right-panel-toolbar" data-tauri-drag-region>
           <h2>Outline</h2>
         </div>
@@ -1063,7 +1074,7 @@
             No headings found.
           </div>
         {/if}
-      {:else if notesDock !== 'right'}
+      {:else if toolDocks.notes !== 'right'}
         <div class="right-panel-empty">
           Drop tools here.
         </div>
