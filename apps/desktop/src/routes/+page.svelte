@@ -3,7 +3,6 @@
   import {
     FileText,
     FolderOpen,
-    LayoutPanelLeft,
     ListTree,
     Plus,
     Save,
@@ -24,10 +23,17 @@
     selectWorkspaceDirectory,
     updateAppSettings
   } from '$lib/api';
-  import type { DockSide, NoteSource, NoteSummary, PanelMode, WorkspaceSummary } from '$lib/types';
+  import type {
+    DockSide,
+    NoteSource,
+    NoteSummary,
+    PanelMode,
+    PanelStackAnchor,
+    WorkspaceSummary
+  } from '$lib/types';
 
   type EditorMode = 'live' | 'source' | 'split' | 'preview';
-  type RibbonToolId = 'notes' | 'new-note' | 'settings' | 'outline' | 'panel-layout';
+  type RibbonToolId = 'notes' | 'new-note' | 'settings' | 'outline';
   type RibbonTool = {
     id: RibbonToolId;
     label: string;
@@ -56,8 +62,7 @@
     notes: 'left',
     'new-note': 'left',
     settings: 'left',
-    outline: 'right',
-    'panel-layout': 'right'
+    outline: 'right'
   };
   const defaultHudHeights: HudHeights = {
     notes: 320,
@@ -68,6 +73,8 @@
   let rightPanelWidth = 255;
   let leftPanelMode: PanelMode = 'view';
   let rightPanelMode: PanelMode = 'view';
+  let leftPanelStackAnchor: PanelStackAnchor = 'bottom';
+  let rightPanelStackAnchor: PanelStackAnchor = 'top';
   let toolDocks: ToolDocks = { ...defaultToolDocks };
   let hudHeights: HudHeights = { ...defaultHudHeights };
   let workspacePath = '';
@@ -352,6 +359,10 @@
     return mode === 'ribbon' ? 'ribbon' : 'view';
   }
 
+  function normalizePanelStackAnchor(anchor: string): PanelStackAnchor {
+    return anchor === 'bottom' ? 'bottom' : 'top';
+  }
+
   function normalizeDockSide(side: string): DockSide {
     return side === 'right' ? 'right' : 'left';
   }
@@ -362,12 +373,13 @@
     rightPanelWidth = clamp(settings.right_panel_width, minRightPanelWidth, maxRightPanelWidth);
     leftPanelMode = normalizePanelMode(settings.left_panel_mode);
     rightPanelMode = normalizePanelMode(settings.right_panel_mode);
+    leftPanelStackAnchor = normalizePanelStackAnchor(settings.left_panel_stack_anchor);
+    rightPanelStackAnchor = normalizePanelStackAnchor(settings.right_panel_stack_anchor);
     toolDocks = {
       notes: normalizeDockSide(settings.notes_dock),
       'new-note': normalizeDockSide(settings.new_note_dock),
       settings: normalizeDockSide(settings.settings_dock),
-      outline: normalizeDockSide(settings.outline_dock),
-      'panel-layout': normalizeDockSide(settings.panel_layout_dock)
+      outline: normalizeDockSide(settings.outline_dock)
     };
     hudHeights = {
       notes: clamp(settings.notes_hud_height, minHudHeight, maxHudHeight),
@@ -380,8 +392,7 @@
       { id: 'notes', label: 'Notes', dock: docks.notes },
       { id: 'new-note', label: 'New note', dock: docks['new-note'] },
       { id: 'settings', label: 'Settings', dock: docks.settings },
-      { id: 'outline', label: 'Outline', dock: docks.outline },
-      { id: 'panel-layout', label: 'Panel layout', dock: docks['panel-layout'] }
+      { id: 'outline', label: 'Outline', dock: docks.outline }
     ];
   }
 
@@ -400,6 +411,25 @@
     } catch (error) {
       leftPanelMode = previousLeftPanelMode;
       rightPanelMode = previousRightPanelMode;
+      status = error instanceof Error ? error.message : String(error);
+    }
+  }
+
+  async function setPanelStackAnchor(panel: 'left' | 'right', anchor: PanelStackAnchor) {
+    const previousLeftPanelStackAnchor = leftPanelStackAnchor;
+    const previousRightPanelStackAnchor = rightPanelStackAnchor;
+
+    if (panel === 'left') {
+      leftPanelStackAnchor = anchor;
+    } else {
+      rightPanelStackAnchor = anchor;
+    }
+
+    try {
+      await persistUiSettings();
+    } catch (error) {
+      leftPanelStackAnchor = previousLeftPanelStackAnchor;
+      rightPanelStackAnchor = previousRightPanelStackAnchor;
       status = error instanceof Error ? error.message : String(error);
     }
   }
@@ -432,7 +462,6 @@
 
   function toolLabel(tool: RibbonToolId): string {
     if (tool === 'new-note') return 'New note';
-    if (tool === 'panel-layout') return 'Panel layout';
     return tool.charAt(0).toUpperCase() + tool.slice(1);
   }
 
@@ -465,8 +494,7 @@
     return value === 'notes'
       || value === 'new-note'
       || value === 'settings'
-      || value === 'outline'
-      || value === 'panel-layout';
+      || value === 'outline';
   }
 
   function runRibbonTool(tool: RibbonToolId) {
@@ -485,7 +513,7 @@
       return;
     }
 
-    if (tool === 'settings' || tool === 'panel-layout') {
+    if (tool === 'settings') {
       settingsOpen = true;
     }
   }
@@ -496,11 +524,12 @@
       right_panel_width: Math.round(rightPanelWidth),
       left_panel_mode: leftPanelMode,
       right_panel_mode: rightPanelMode,
+      left_panel_stack_anchor: leftPanelStackAnchor,
+      right_panel_stack_anchor: rightPanelStackAnchor,
       notes_dock: toolDocks.notes,
       new_note_dock: toolDocks['new-note'],
       settings_dock: toolDocks.settings,
       outline_dock: toolDocks.outline,
-      panel_layout_dock: toolDocks['panel-layout'],
       notes_hud_height: hudHeights.notes,
       outline_hud_height: hudHeights.outline
     });
@@ -677,6 +706,7 @@
   >
     {#if leftPanelMode === 'ribbon'}
       <nav
+        class:stack-bottom={leftPanelStackAnchor === 'bottom'}
         class="panel-ribbon"
         aria-label="Left ribbon"
         on:dragover={allowRibbonDrop}
@@ -684,7 +714,7 @@
       >
         {#each leftRibbonTools as tool}
           <button
-            class:active={(tool.id === 'settings' || tool.id === 'panel-layout') && settingsOpen}
+            class:active={tool.id === 'settings' && settingsOpen}
             class:drag-enabled={true}
             class="ribbon-button"
             aria-label={tool.label}
@@ -703,8 +733,6 @@
               <Settings size={17} />
             {:else if tool.id === 'outline'}
               <ListTree size={17} />
-            {:else}
-              <LayoutPanelLeft size={17} />
             {/if}
           </button>
         {/each}
@@ -717,11 +745,11 @@
         </div>
       </div>
 
-      <div class="panel-tool-stack" aria-label="Left panel tools">
+      <div class:stack-bottom={leftPanelStackAnchor === 'bottom'} class="panel-tool-stack" aria-label="Left panel tools">
         {#each leftRibbonTools as tool}
           <section class="panel-tool-group">
             <button
-              class:active={(tool.id === 'settings' || tool.id === 'panel-layout') && settingsOpen}
+              class:active={tool.id === 'settings' && settingsOpen}
               class:drag-enabled={true}
               class="panel-tool-button"
               aria-label={tool.label}
@@ -740,8 +768,6 @@
                 <Settings size={15} />
               {:else if tool.id === 'outline'}
                 <ListTree size={15} />
-              {:else}
-                <LayoutPanelLeft size={15} />
               {/if}
               <span>{tool.label}</span>
             </button>
@@ -875,7 +901,7 @@
             <div class="setting-row">
               <div>
                 <span>Left panel</span>
-                <p>{leftPanelMode === 'ribbon' ? 'Ribbon' : `${leftPanelWidth}px`}</p>
+                <p>{leftPanelMode === 'ribbon' ? 'Ribbon' : `${leftPanelWidth}px`} · {leftPanelStackAnchor}</p>
               </div>
               <div class="segmented-control" aria-label="Left panel mode">
                 <button class:active={leftPanelMode === 'view'} on:click={() => setPanelMode('left', 'view')}>View</button>
@@ -885,12 +911,34 @@
 
             <div class="setting-row">
               <div>
+                <span>Left stack</span>
+                <p>{leftPanelStackAnchor === 'bottom' ? 'Anchored bottom' : 'Anchored top'}</p>
+              </div>
+              <div class="segmented-control" aria-label="Left panel stack anchor">
+                <button class:active={leftPanelStackAnchor === 'top'} on:click={() => setPanelStackAnchor('left', 'top')}>Top</button>
+                <button class:active={leftPanelStackAnchor === 'bottom'} on:click={() => setPanelStackAnchor('left', 'bottom')}>Bottom</button>
+              </div>
+            </div>
+
+            <div class="setting-row">
+              <div>
                 <span>Right panel</span>
-                <p>{rightPanelMode === 'ribbon' ? 'Ribbon' : `${rightPanelWidth}px`}</p>
+                <p>{rightPanelMode === 'ribbon' ? 'Ribbon' : `${rightPanelWidth}px`} · {rightPanelStackAnchor}</p>
               </div>
               <div class="segmented-control" aria-label="Right panel mode">
                 <button class:active={rightPanelMode === 'view'} on:click={() => setPanelMode('right', 'view')}>View</button>
                 <button class:active={rightPanelMode === 'ribbon'} on:click={() => setPanelMode('right', 'ribbon')}>Ribbon</button>
+              </div>
+            </div>
+
+            <div class="setting-row">
+              <div>
+                <span>Right stack</span>
+                <p>{rightPanelStackAnchor === 'bottom' ? 'Anchored bottom' : 'Anchored top'}</p>
+              </div>
+              <div class="segmented-control" aria-label="Right panel stack anchor">
+                <button class:active={rightPanelStackAnchor === 'top'} on:click={() => setPanelStackAnchor('right', 'top')}>Top</button>
+                <button class:active={rightPanelStackAnchor === 'bottom'} on:click={() => setPanelStackAnchor('right', 'bottom')}>Bottom</button>
               </div>
             </div>
 
@@ -1044,6 +1092,7 @@
   >
     {#if rightPanelMode === 'ribbon'}
       <nav
+        class:stack-bottom={rightPanelStackAnchor === 'bottom'}
         class="panel-ribbon"
         aria-label="Right ribbon"
         on:dragover={allowRibbonDrop}
@@ -1051,7 +1100,7 @@
       >
         {#each rightRibbonTools as tool}
           <button
-            class:active={(tool.id === 'settings' || tool.id === 'panel-layout') && settingsOpen}
+            class:active={tool.id === 'settings' && settingsOpen}
             class:drag-enabled={true}
             class="ribbon-button"
             aria-label={tool.label}
@@ -1070,18 +1119,16 @@
               <Settings size={17} />
             {:else if tool.id === 'outline'}
               <ListTree size={17} />
-            {:else}
-              <LayoutPanelLeft size={17} />
             {/if}
           </button>
         {/each}
       </nav>
     {:else}
-      <div class="panel-tool-stack" aria-label="Right panel tools">
+      <div class:stack-bottom={rightPanelStackAnchor === 'bottom'} class="panel-tool-stack" aria-label="Right panel tools">
         {#each rightRibbonTools as tool}
           <section class="panel-tool-group">
             <button
-              class:active={(tool.id === 'settings' || tool.id === 'panel-layout') && settingsOpen}
+              class:active={tool.id === 'settings' && settingsOpen}
               class:drag-enabled={true}
               class="panel-tool-button"
               aria-label={tool.label}
@@ -1100,8 +1147,6 @@
                 <Settings size={15} />
               {:else if tool.id === 'outline'}
                 <ListTree size={15} />
-              {:else}
-                <LayoutPanelLeft size={15} />
               {/if}
               <span>{tool.label}</span>
             </button>
@@ -1208,10 +1253,15 @@
   .panel-ribbon {
     display: grid;
     align-content: start;
+    flex: 1 1 auto;
     justify-items: center;
     gap: 0.36rem;
     width: 100%;
     min-height: 0;
+  }
+
+  .panel-ribbon.stack-bottom {
+    align-content: end;
   }
 
   .ribbon-button {
@@ -1253,6 +1303,10 @@
     flex-direction: column;
     gap: 0.38rem;
     overflow: auto;
+  }
+
+  .panel-tool-stack.stack-bottom {
+    justify-content: flex-end;
   }
 
   .panel-tool-group {
