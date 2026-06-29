@@ -3,31 +3,31 @@
   import { marked } from 'marked';
   import {
     createNote,
-    getNote,
+    getNoteSource,
     listNotes,
     openWorkspace,
-    saveNote,
+    saveNoteSource,
     selectWorkspaceDirectory
   } from '$lib/api';
-  import type { NoteDocument, NoteSummary, WorkspaceSummary } from '$lib/types';
+  import type { NoteSource, NoteSummary, WorkspaceSummary } from '$lib/types';
 
   type EditorMode = 'write' | 'split' | 'preview';
 
   let workspacePath = '';
   let workspace: WorkspaceSummary | null = null;
   let notes: NoteSummary[] = [];
-  let selectedNote: NoteDocument | null = null;
+  let selectedNoteSource: NoteSource | null = null;
+  let noteSource = '';
   let status = 'Choose or type a workspace path to begin.';
   let saving = false;
   let browsing = false;
   let settingsOpen = false;
   let editorMode: EditorMode = 'split';
 
-  $: selectedId = selectedNote?.frontmatter.id;
-  $: tagText = selectedNote?.frontmatter.tags?.join(', ') ?? '';
-  $: aliasText = selectedNote?.frontmatter.aliases?.join(', ') ?? '';
+  $: selectedId = selectedNoteSource?.id;
+  $: selectedTitle = notes.find((note) => note.id === selectedId)?.title ?? 'Untitled';
   $: markdownHtml = DOMPurify.sanitize(
-    marked.parse(selectedNote?.body ?? '', { async: false }) as string
+    marked.parse(extractMarkdownBody(noteSource), { async: false }) as string
   );
 
   async function openCurrentWorkspace() {
@@ -56,7 +56,8 @@
   async function openWorkspacePath(path: string) {
     workspace = await openWorkspace(path);
     notes = await listNotes();
-    selectedNote = null;
+    selectedNoteSource = null;
+    noteSource = '';
     settingsOpen = false;
     status = `Opened ${workspace.root}`;
   }
@@ -69,33 +70,41 @@
   }
 
   async function selectNote(id: string) {
-    selectedNote = await getNote(id);
+    selectedNoteSource = await getNoteSource(id);
+    noteSource = selectedNoteSource.source;
     status = 'Note loaded.';
   }
 
   async function saveSelectedNote() {
-    if (!selectedNote) return;
+    if (!selectedNoteSource) return;
 
     saving = true;
-    const result = await saveNote({
-      id: selectedNote.frontmatter.id,
-      title: selectedNote.frontmatter.title,
-      note_type: selectedNote.frontmatter.type || 'note',
-      tags: splitList(tagText),
-      aliases: splitList(aliasText),
-      body: selectedNote.body
-    });
-    notes = await listNotes();
-    await selectNote(result.note.id);
-    status = 'Saved.';
-    saving = false;
+    try {
+      const result = await saveNoteSource({
+        id: selectedNoteSource.id,
+        source: noteSource
+      });
+      notes = await listNotes();
+      await selectNote(result.note.id);
+      status = 'Saved.';
+    } catch (error) {
+      status = error instanceof Error ? error.message : String(error);
+    } finally {
+      saving = false;
+    }
   }
 
-  function splitList(input: string): string[] {
-    return input
-      .split(',')
-      .map((item) => item.trim())
-      .filter(Boolean);
+  function extractMarkdownBody(source: string): string {
+    if (!source.startsWith('---')) {
+      return source;
+    }
+
+    const delimiter = source.indexOf('\n---', 3);
+    if (delimiter === -1) {
+      return '';
+    }
+
+    return source.slice(delimiter + 4).replace(/^\r?\n+/, '');
   }
 </script>
 
@@ -171,35 +180,16 @@
   </aside>
 
   <section class="editor">
-    {#if selectedNote}
+    {#if selectedNoteSource}
       <header class="editor-header">
         <div>
-          <input
-            class="title-input"
-            bind:value={selectedNote.frontmatter.title}
-            aria-label="Note title"
-          />
-          <p>{selectedNote.frontmatter.id}</p>
+          <h2>{selectedTitle}</h2>
+          <p>{selectedNoteSource.id}</p>
         </div>
         <button class="primary" disabled={saving} on:click={saveSelectedNote}>
           {saving ? 'Saving' : 'Save'}
         </button>
       </header>
-
-      <div class="properties">
-        <label>
-          Type
-          <input bind:value={selectedNote.frontmatter.type} />
-        </label>
-        <label>
-          Tags
-          <input bind:value={tagText} placeholder="comma, separated" />
-        </label>
-        <label>
-          Aliases
-          <input bind:value={aliasText} placeholder="comma, separated" />
-        </label>
-      </div>
 
       <div class="editor-toolbar">
         <div class="mode-group" aria-label="Editor mode">
@@ -229,7 +219,7 @@
 
       <div class:preview-only={editorMode === 'preview'} class:write-only={editorMode === 'write'} class="body-shell">
         {#if editorMode !== 'preview'}
-          <textarea class="body-editor" bind:value={selectedNote.body} aria-label="Markdown body"></textarea>
+          <textarea class="body-editor" bind:value={noteSource} aria-label="MarkdownPlus source"></textarea>
         {/if}
 
         {#if editorMode !== 'write'}
@@ -405,7 +395,7 @@
 
   .editor {
     display: grid;
-    grid-template-rows: auto auto auto minmax(0, 1fr) auto;
+    grid-template-rows: auto auto minmax(0, 1fr) auto;
     gap: 0.55rem;
     padding: 0.72rem;
     min-width: 0;
@@ -420,29 +410,15 @@
     gap: 0.72rem;
   }
 
-  .title-input {
-    border: 0;
-    border-bottom: 1px solid #303946;
-    border-radius: 0;
-    padding-left: 0;
-    background: transparent;
+  .editor-header h2 {
+    overflow: hidden;
+    margin: 0;
     color: #f0f4f8;
     font-size: 1.16rem;
     font-weight: 700;
-  }
-
-  .properties {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 0.5rem;
-  }
-
-  .properties label {
-    display: grid;
-    gap: 0.28rem;
-    color: #9aa6b2;
-    font-size: 0.72rem;
-    font-weight: 650;
+    line-height: 1.2;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .editor-toolbar {
@@ -488,11 +464,13 @@
   .body-editor {
     min-height: 0;
     height: 100%;
-    line-height: 1.5;
+    line-height: 1.35;
     border-color: #232b36;
     background: #0b0f14;
+    tab-size: 2;
     font-family:
       "SFMono-Regular", Consolas, "Liberation Mono", Menlo, ui-monospace, monospace;
+    font-size: 0.88rem;
   }
 
   .markdown-preview {
@@ -503,7 +481,8 @@
     background: #0b0f14;
     padding: 0.65rem 0.72rem;
     color: #d7dde4;
-    line-height: 1.5;
+    line-height: 1.35;
+    font-size: 0.9rem;
   }
 
   .markdown-preview :global(*) {
@@ -513,21 +492,21 @@
   .markdown-preview :global(h1),
   .markdown-preview :global(h2),
   .markdown-preview :global(h3) {
-    margin: 0.2rem 0 0.55rem;
+    margin: 0 0 0.28rem;
     color: #f0f4f8;
-    line-height: 1.2;
+    line-height: 1.15;
   }
 
   .markdown-preview :global(h1) {
-    font-size: 1.28rem;
+    font-size: 1.08rem;
   }
 
   .markdown-preview :global(h2) {
-    font-size: 1.05rem;
+    font-size: 0.98rem;
   }
 
   .markdown-preview :global(h3) {
-    font-size: 0.95rem;
+    font-size: 0.92rem;
   }
 
   .markdown-preview :global(p),
@@ -535,7 +514,7 @@
   .markdown-preview :global(ol),
   .markdown-preview :global(blockquote),
   .markdown-preview :global(pre) {
-    margin: 0 0 0.7rem;
+    margin: 0 0 0.28rem;
   }
 
   .markdown-preview :global(strong) {
@@ -563,7 +542,7 @@
     border: 1px solid #303946;
     border-radius: 5px;
     background: #111820;
-    padding: 0.65rem;
+    padding: 0.45rem;
   }
 
   .markdown-preview :global(pre code) {
@@ -607,8 +586,5 @@
       border-bottom: 1px solid #232b36;
     }
 
-    .properties {
-      grid-template-columns: 1fr;
-    }
   }
 </style>

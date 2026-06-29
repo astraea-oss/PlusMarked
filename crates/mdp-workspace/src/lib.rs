@@ -36,6 +36,18 @@ pub struct SaveNoteInput {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NoteSource {
+    pub id: String,
+    pub source: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SaveNoteSourceInput {
+    pub id: String,
+    pub source: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SaveResult {
     pub note: NoteSummary,
 }
@@ -94,6 +106,20 @@ impl WorkspaceHandle {
         parse_document(&input).map_err(Into::into)
     }
 
+    pub fn get_note_source(&self, id: &str) -> Result<NoteSource> {
+        let path = self
+            .database
+            .note_path(id)?
+            .unwrap_or_else(|| self.note_path(id));
+        let source = fs::read_to_string(&path)
+            .with_context(|| format!("reading note {}", path.to_string_lossy()))?;
+
+        Ok(NoteSource {
+            id: id.to_string(),
+            source,
+        })
+    }
+
     pub fn save_note(&self, input: SaveNoteInput) -> Result<SaveResult> {
         let existing = self.get_note(&input.id)?;
         let document = update_note(
@@ -110,6 +136,26 @@ impl WorkspaceHandle {
 
         Ok(SaveResult {
             note: self.find_summary(&document.frontmatter.id.to_string())?,
+        })
+    }
+
+    pub fn save_note_source(&self, input: SaveNoteSourceInput) -> Result<SaveResult> {
+        let document = parse_document(&input.source).context("parsing MarkdownPlus source")?;
+        let document_id = document.frontmatter.id.to_string();
+        if document_id != input.id {
+            return Err(anyhow!(
+                "note id cannot be changed from {} to {}",
+                input.id,
+                document_id
+            ));
+        }
+
+        let path = self.note_path(&document_id);
+        write_source_atomic(&path, &input.source)?;
+        self.database.upsert_note(&document, &path)?;
+
+        Ok(SaveResult {
+            note: self.find_summary(&document_id)?,
         })
     }
 
@@ -146,6 +192,10 @@ impl WorkspaceHandle {
 
 fn write_document_atomic(path: &Path, document: &NoteDocument) -> Result<()> {
     let content = serialize_document(document)?;
+    write_source_atomic(path, &content)
+}
+
+fn write_source_atomic(path: &Path, content: &str) -> Result<()> {
     let temporary_path = path.with_extension("mdp.tmp");
     fs::write(&temporary_path, content)
         .with_context(|| format!("writing temporary note {}", temporary_path.to_string_lossy()))?;
@@ -153,4 +203,3 @@ fn write_document_atomic(path: &Path, document: &NoteDocument) -> Result<()> {
         .with_context(|| format!("moving note into place {}", path.to_string_lossy()))?;
     Ok(())
 }
-

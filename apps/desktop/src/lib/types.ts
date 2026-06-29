@@ -25,6 +25,11 @@ export type NoteDocument = {
   body: string;
 };
 
+export type NoteSource = {
+  id: string;
+  source: string;
+};
+
 export type SaveNoteInput = {
   id: string;
   title: string;
@@ -34,3 +39,7 @@ export type SaveNoteInput = {
   body: string;
 };
 
+export type SaveNoteSourceInput = {
+  id: string;
+  source: string;
+};

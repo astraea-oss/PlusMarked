@@ -2,7 +2,8 @@ use std::sync::Mutex;
 
 use mdp_core::NoteDocument;
 use mdp_workspace::{
-    CreateNoteInput, NoteSummary, SaveNoteInput, SaveResult, WorkspaceHandle, WorkspaceSummary,
+    CreateNoteInput, NoteSource, NoteSummary, SaveNoteInput, SaveNoteSourceInput, SaveResult,
+    WorkspaceHandle, WorkspaceSummary,
 };
 use tauri::State;
 
@@ -44,10 +45,27 @@ fn get_note(id: String, state: State<'_, AppState>) -> Result<NoteDocument, Stri
 }
 
 #[tauri::command]
+fn get_note_source(id: String, state: State<'_, AppState>) -> Result<NoteSource, String> {
+    let guard = state.workspace.lock().map_err(lock_error)?;
+    let workspace = guard.as_ref().ok_or("open a workspace first")?;
+    workspace.get_note_source(&id).map_err(to_command_error)
+}
+
+#[tauri::command]
 fn save_note(input: SaveNoteInput, state: State<'_, AppState>) -> Result<SaveResult, String> {
     let guard = state.workspace.lock().map_err(lock_error)?;
     let workspace = guard.as_ref().ok_or("open a workspace first")?;
     workspace.save_note(input).map_err(to_command_error)
+}
+
+#[tauri::command]
+fn save_note_source(
+    input: SaveNoteSourceInput,
+    state: State<'_, AppState>,
+) -> Result<SaveResult, String> {
+    let guard = state.workspace.lock().map_err(lock_error)?;
+    let workspace = guard.as_ref().ok_or("open a workspace first")?;
+    workspace.save_note_source(input).map_err(to_command_error)
 }
 
 pub fn run() {
@@ -59,7 +77,9 @@ pub fn run() {
             create_note,
             list_notes,
             get_note,
-            save_note
+            get_note_source,
+            save_note,
+            save_note_source
         ])
         .run(tauri::generate_context!())
         .expect("error while running MarkdownPlus");
