@@ -69,10 +69,10 @@
 
 <main class="app-shell">
   <aside class="sidebar">
-    <div class="brand">
+    <div class="brand" data-tauri-drag-region>
       <div>
         <h1>MarkdownPlus</h1>
-        <p>Local `.mdp` workspace</p>
+        <p>Local .mdp workspace</p>
       </div>
     </div>
 
@@ -145,7 +145,7 @@
 
       <textarea class="body-editor" bind:value={selectedNote.body} aria-label="Markdown body"></textarea>
     {:else}
-      <div class="empty-state">
+      <div class="empty-state" data-tauri-drag-region>
         <h2>Open a workspace</h2>
         <p>{status}</p>
       </div>
@@ -158,79 +158,97 @@
 <style>
   .app-shell {
     display: grid;
-    grid-template-columns: minmax(280px, 340px) minmax(0, 1fr);
+    grid-template-columns: minmax(240px, 285px) minmax(0, 1fr);
     min-height: 100vh;
+    max-height: 100vh;
+    background: #0d1117;
   }
 
   .sidebar {
     display: flex;
     flex-direction: column;
-    gap: 1rem;
-    border-right: 1px solid #d8e0e6;
-    background: #edf2f3;
-    padding: 1rem;
+    gap: 0.72rem;
+    border-right: 1px solid #232b36;
+    background: #0b0f14;
+    padding: 0.72rem;
+    min-height: 0;
   }
 
   .brand h1 {
     margin: 0;
-    font-size: 1.25rem;
+    color: #f0f4f8;
+    font-size: 1rem;
+    line-height: 1.15;
   }
 
   .brand p,
   .editor-header p,
   .empty-state p,
   footer {
-    margin: 0.25rem 0 0;
-    color: #5c6670;
-    font-size: 0.86rem;
+    margin: 0.15rem 0 0;
+    color: #7d8896;
+    font-size: 0.75rem;
   }
 
   .workspace-panel {
     display: grid;
-    gap: 0.45rem;
+    gap: 0.34rem;
+  }
+
+  .workspace-panel label {
+    color: #9aa6b2;
+    font-size: 0.72rem;
+    font-weight: 650;
   }
 
   .workspace-row {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
-    gap: 0.5rem;
+    gap: 0.38rem;
   }
 
   .notes-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 0.75rem;
+    gap: 0.5rem;
+    color: #aeb8c4;
+    font-size: 0.78rem;
   }
 
   .count {
     font-weight: 700;
+    color: #d7dde4;
   }
 
   .notes-list {
     display: grid;
     align-content: start;
-    gap: 0.35rem;
+    gap: 0.22rem;
     overflow: auto;
+    min-height: 0;
   }
 
   .note-row {
     display: grid;
-    gap: 0.2rem;
+    gap: 0.16rem;
     width: 100%;
     text-align: left;
-    background: transparent;
+    background: #0f141b;
+    border-color: transparent;
+    padding: 0.46rem 0.52rem;
   }
 
   .note-row.active {
-    background: #ffffff;
-    border-color: #285e61;
+    background: #10211e;
+    border-color: #2ea987;
   }
 
   .note-title {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    color: #e6edf3;
     font-weight: 650;
   }
 
@@ -238,46 +256,49 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    color: #66727f;
-    font-size: 0.8rem;
+    color: #7d8896;
+    font-size: 0.72rem;
   }
 
   .editor {
     display: grid;
     grid-template-rows: auto auto minmax(0, 1fr) auto;
-    gap: 1rem;
-    padding: 1rem;
+    gap: 0.72rem;
+    padding: 0.72rem;
     min-width: 0;
+    min-height: 0;
+    background: #0d1117;
   }
 
   .editor-header {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
     align-items: start;
-    gap: 1rem;
+    gap: 0.72rem;
   }
 
   .title-input {
     border: 0;
-    border-bottom: 1px solid #c7d0d8;
+    border-bottom: 1px solid #303946;
     border-radius: 0;
     padding-left: 0;
     background: transparent;
-    font-size: 1.55rem;
+    color: #f0f4f8;
+    font-size: 1.16rem;
     font-weight: 700;
   }
 
   .properties {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 0.75rem;
+    gap: 0.5rem;
   }
 
   .properties label {
     display: grid;
-    gap: 0.35rem;
-    color: #43505d;
-    font-size: 0.84rem;
+    gap: 0.28rem;
+    color: #9aa6b2;
+    font-size: 0.72rem;
     font-weight: 650;
   }
 
@@ -285,6 +306,8 @@
     min-height: 0;
     height: 100%;
     line-height: 1.5;
+    border-color: #232b36;
+    background: #0b0f14;
     font-family:
       "SFMono-Regular", Consolas, "Liberation Mono", Menlo, ui-monospace, monospace;
   }
@@ -294,15 +317,20 @@
     place-content: center;
     min-height: 100%;
     text-align: center;
+    color: #d7dde4;
   }
 
   .empty-state h2 {
     margin: 0 0 0.35rem;
+    font-size: 1.1rem;
   }
 
   footer {
-    border-top: 1px solid #d8e0e6;
-    padding-top: 0.75rem;
+    overflow: hidden;
+    border-top: 1px solid #232b36;
+    padding-top: 0.5rem;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   @media (max-width: 760px) {
@@ -312,7 +340,7 @@
 
     .sidebar {
       border-right: 0;
-      border-bottom: 1px solid #d8e0e6;
+      border-bottom: 1px solid #232b36;
     }
 
     .properties {

@@ -13,10 +13,11 @@
     "windows": [
       {
         "title": "MarkdownPlus",
-        "width": 1200,
-        "height": 800,
-        "minWidth": 860,
-        "minHeight": 560
+        "width": 1040,
+        "height": 680,
+        "minWidth": 760,
+        "minHeight": 480,
+        "decorations": false
       }
     ],
     "security": {
@@ -28,4 +29,3 @@
     "targets": "all"
   }
 }
-
