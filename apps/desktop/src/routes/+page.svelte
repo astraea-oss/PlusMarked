@@ -1,11 +1,10 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onDestroy, onMount } from 'svelte';
   import {
     FileText,
     FolderOpen,
     ListTree,
     Plus,
-    Save,
     Settings,
     SlidersHorizontal,
     X
@@ -108,6 +107,10 @@
   let status = 'Choose or type a workspace path to begin.';
   let portableRoot = '';
   let saving = false;
+  let autosaveTimer: ReturnType<typeof setTimeout> | null = null;
+  let saveInFlight: Promise<boolean> | null = null;
+  let lastSavedNoteId: string | null = null;
+  let lastSavedSource = '';
   let browsing = false;
   let settingsOpen = false;
   let editorMode: EditorMode = 'live';
@@ -149,6 +152,12 @@
     }
   });
 
+  onDestroy(() => {
+    if (autosaveTimer) {
+      clearTimeout(autosaveTimer);
+    }
+  });
+
   async function openCurrentWorkspace() {
     if (!workspacePath.trim()) {
       status = 'Enter a local workspace path.';
@@ -173,8 +182,11 @@
   }
 
   async function openWorkspacePath(path: string) {
+    if (!(await flushPendingAutosave())) return;
+
     workspace = await openWorkspace(path);
     notes = await listNotes();
+    clearAutosaveState();
     selectedNoteSource = null;
     noteSource = '';
     settingsOpen = false;
@@ -182,6 +194,8 @@
   }
 
   async function createNewNote() {
+    if (!(await flushPendingAutosave())) return;
+
     const note = await createNote('Untitled');
     notes = await listNotes();
     await selectNote(note.id);
@@ -189,33 +203,128 @@
   }
 
   async function selectNote(id: string) {
+    if (selectedNoteSource && selectedNoteSource.id !== id && !(await flushPendingAutosave())) {
+      return;
+    }
+
+    clearAutosaveState();
     selectedNoteSource = await getNoteSource(id);
     noteSource = selectedNoteSource.source;
+    lastSavedNoteId = id;
+    lastSavedSource = noteSource;
     syncLiveFieldsFromSource();
     status = 'Note loaded.';
   }
 
-  async function saveSelectedNote() {
-    if (!selectedNoteSource) return;
+  async function saveSelectedNote(force = false): Promise<boolean> {
+    if (!selectedNoteSource) return true;
 
-    saving = true;
+    if (saveInFlight) {
+      await saveInFlight;
+      return saveSelectedNote(force);
+    }
+
+    if (editorMode === 'live') {
+      updateSourceFromLiveFields(false);
+    }
+
+    const noteId = selectedNoteSource.id;
+    const sourceToSave = noteSource;
+    if (!force && noteId === lastSavedNoteId && sourceToSave === lastSavedSource) {
+      return true;
+    }
+
+    const saveRequest = performNoteSave(noteId, sourceToSave);
+    saveInFlight = saveRequest;
     try {
-      if (editorMode === 'live') {
-        updateSourceFromLiveFields();
+      return await saveRequest;
+    } finally {
+      if (saveInFlight === saveRequest) {
+        saveInFlight = null;
+      }
+    }
+  }
+
+  async function performNoteSave(noteId: string, sourceToSave: string): Promise<boolean> {
+    saving = true;
+    status = 'Saving...';
+
+    try {
+      const result = await saveNoteSource({
+        id: noteId,
+        source: sourceToSave
+      });
+
+      notes = upsertNoteSummary(notes, result.note);
+
+      if (selectedNoteSource?.id === noteId) {
+        selectedNoteSource = { ...selectedNoteSource, source: sourceToSave };
+        lastSavedNoteId = noteId;
+        lastSavedSource = sourceToSave;
+
+        if (noteSource === sourceToSave) {
+          status = 'Saved.';
+        } else {
+          scheduleAutosave();
+        }
       }
 
-      const result = await saveNoteSource({
-        id: selectedNoteSource.id,
-        source: noteSource
-      });
-      notes = await listNotes();
-      await selectNote(result.note.id);
-      status = 'Saved.';
+      return true;
     } catch (error) {
       status = error instanceof Error ? error.message : String(error);
+      return false;
     } finally {
       saving = false;
     }
+  }
+
+  function upsertNoteSummary(items: NoteSummary[], note: NoteSummary): NoteSummary[] {
+    if (!items.some((item) => item.id === note.id)) {
+      return [note, ...items];
+    }
+
+    return items.map((item) => (item.id === note.id ? note : item));
+  }
+
+  function scheduleAutosave(delay = 700) {
+    if (!selectedNoteSource) return;
+
+    if (autosaveTimer) {
+      clearTimeout(autosaveTimer);
+    }
+
+    if (selectedNoteSource.id === lastSavedNoteId && noteSource === lastSavedSource) {
+      status = 'Saved.';
+      autosaveTimer = null;
+      return;
+    }
+
+    status = saving ? 'Saving...' : 'Unsaved changes.';
+    autosaveTimer = setTimeout(() => {
+      autosaveTimer = null;
+      void saveSelectedNote();
+    }, delay);
+  }
+
+  async function flushPendingAutosave(): Promise<boolean> {
+    if (autosaveTimer) {
+      clearTimeout(autosaveTimer);
+      autosaveTimer = null;
+    }
+
+    return saveSelectedNote();
+  }
+
+  function clearAutosaveState() {
+    if (autosaveTimer) {
+      clearTimeout(autosaveTimer);
+      autosaveTimer = null;
+    }
+
+    saveInFlight = null;
+    lastSavedNoteId = null;
+    lastSavedSource = '';
+    saving = false;
   }
 
   function extractMarkdownBody(source: string): string {
@@ -666,13 +775,17 @@
       }));
   }
 
-  function updateSourceFromLiveFields() {
+  function updateSourceFromLiveFields(shouldAutosave = true) {
     const yaml = propertyRows
       .filter((property) => property.key.trim())
       .map((property) => `${property.key.trim()}: ${property.value}`)
       .join('\n');
 
     noteSource = `---\n${yaml}\n---\n${liveBody}`;
+
+    if (shouldAutosave) {
+      scheduleAutosave();
+    }
   }
 
   function updateProperty(index: number, field: keyof PropertyRow, value: string) {
@@ -735,6 +848,7 @@
   function handleSourceInput(value: string) {
     noteSource = value;
     syncLiveFieldsFromSource();
+    scheduleAutosave();
   }
 
   function setEditorText(target: 'source' | 'body', value: string) {
@@ -1098,10 +1212,6 @@
             <h2>{selectedTitle}</h2>
             <p>{selectedNoteSource.id}</p>
           </div>
-          <button class="primary save-button" disabled={saving} on:click={saveSelectedNote}>
-            <Save size={15} />
-            {saving ? 'Saving' : 'Save'}
-          </button>
         </header>
 
         {#if editorMode === 'live'}
@@ -1959,12 +2069,6 @@
     line-height: 1.2;
     text-overflow: ellipsis;
     white-space: nowrap;
-  }
-
-  .save-button {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.34rem;
   }
 
   .mode-group {
