@@ -370,73 +370,75 @@
 
   <section class="editor">
     {#if selectedNoteSource}
-      <header class="editor-header">
-        <div>
-          <h2>{selectedTitle}</h2>
-          <p>{selectedNoteSource.id}</p>
-        </div>
-        <button class="primary" disabled={saving} on:click={saveSelectedNote}>
-          {saving ? 'Saving' : 'Save'}
-        </button>
-      </header>
+      <div class="note-page">
+        <header class="editor-header">
+          <div>
+            <h2>{selectedTitle}</h2>
+            <p>{selectedNoteSource.id}</p>
+          </div>
+          <button class="primary" disabled={saving} on:click={saveSelectedNote}>
+            {saving ? 'Saving' : 'Save'}
+          </button>
+        </header>
 
-      {#if editorMode === 'live'}
-        <div class="live-editor">
-          <section class="live-properties" aria-label="Note properties">
-            <div class="property-list">
-              {#each propertyRows as property, index}
-                <div class="property-row">
-                  <input
-                    aria-label="Property name"
-                    value={property.key}
-                    on:input={(event) => updateProperty(index, 'key', event.currentTarget.value)}
-                  />
-                  <input
-                    aria-label="Property value"
-                    value={property.value}
-                    on:input={(event) => updateProperty(index, 'value', event.currentTarget.value)}
-                  />
-                  <button class="property-remove-button" aria-label="Remove property" on:click={() => removeProperty(index)}>
-                    X
-                  </button>
-                </div>
-              {/each}
-            </div>
+        {#if editorMode === 'live'}
+          <div class="live-editor">
+            <section class="live-properties" aria-label="Note properties">
+              <div class="property-list">
+                {#each propertyRows as property, index}
+                  <div class="property-row">
+                    <input
+                      aria-label="Property name"
+                      value={property.key}
+                      on:input={(event) => updateProperty(index, 'key', event.currentTarget.value)}
+                    />
+                    <input
+                      aria-label="Property value"
+                      value={property.value}
+                      on:input={(event) => updateProperty(index, 'value', event.currentTarget.value)}
+                    />
+                    <button class="property-remove-button" aria-label="Remove property" on:click={() => removeProperty(index)}>
+                      X
+                    </button>
+                  </div>
+                {/each}
+              </div>
 
-            <button class="add-property-button" on:click={addProperty}>Add property</button>
-          </section>
+              <button class="add-property-button" on:click={addProperty}>Add property</button>
+            </section>
 
-          <textarea
-            class="body-editor live-body-editor"
-            value={liveBody}
-            aria-label="MarkdownPlus body"
-            on:input={(event) => updateLiveBody(event.currentTarget.value)}
-            on:keydown={(event) => handleEditorKeydown(event, 'body')}
-          ></textarea>
-        </div>
-      {:else}
-        <div
-          class:preview-only={editorMode === 'preview'}
-          class:source-only={editorMode === 'source'}
-          class="body-shell"
-        >
-          {#if editorMode !== 'preview'}
-          <textarea
-            class="body-editor"
-            value={noteSource}
-            aria-label="MarkdownPlus source"
-            on:input={(event) => handleSourceInput(event.currentTarget.value)}
-            on:keydown={handleEditorKeydown}
-          ></textarea>
-          {/if}
+            <textarea
+              class="body-editor live-body-editor"
+              value={liveBody}
+              aria-label="MarkdownPlus body"
+              on:input={(event) => updateLiveBody(event.currentTarget.value)}
+              on:keydown={(event) => handleEditorKeydown(event, 'body')}
+            ></textarea>
+          </div>
+        {:else}
+          <div
+            class:preview-only={editorMode === 'preview'}
+            class:source-only={editorMode === 'source'}
+            class="body-shell"
+          >
+            {#if editorMode !== 'preview'}
+            <textarea
+              class="body-editor"
+              value={noteSource}
+              aria-label="MarkdownPlus source"
+              on:input={(event) => handleSourceInput(event.currentTarget.value)}
+              on:keydown={handleEditorKeydown}
+            ></textarea>
+            {/if}
 
-          {#if editorMode !== 'source'}
-          <article class="markdown-preview">
-            {@html markdownHtml}
-          </article>
-          {/if}
-        </div>
-      {/if}
+            {#if editorMode !== 'source'}
+            <article class="markdown-preview">
+              {@html markdownHtml}
+            </article>
+            {/if}
+          </div>
+        {/if}
+      </div>
     {:else}
       <div class="empty-state" data-tauri-drag-region>
         <h2>Open a workspace</h2>
@@ -647,12 +649,20 @@
 
   .editor {
     display: grid;
-    grid-template-rows: auto minmax(0, 1fr) auto;
-    gap: 0.38rem;
+    grid-template-rows: minmax(0, 1fr) auto;
+    gap: 0.34rem;
     padding: 0.72rem;
     min-width: 0;
     min-height: 0;
     background: #0d1117;
+  }
+
+  .note-page {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    gap: 0.28rem;
+    min-height: 0;
+    color: #d7dde4;
   }
 
   .editor-header {
@@ -710,7 +720,7 @@
   .live-editor {
     display: grid;
     grid-template-rows: auto minmax(0, 1fr);
-    gap: 0.18rem;
+    gap: 0.1rem;
     min-height: 0;
   }
 
@@ -748,19 +758,6 @@
   .property-row input:focus {
     border-color: #303946;
     background: #10161f;
-  }
-
-  .live-body-editor {
-    border-color: transparent;
-    background: transparent;
-    border-radius: 0;
-    padding: 0.14rem 0 0;
-    box-shadow: none;
-  }
-
-  .live-body-editor:focus {
-    border-color: transparent;
-    box-shadow: none;
   }
 
   .add-property-button {
@@ -812,6 +809,21 @@
     font-family:
       "SFMono-Regular", Consolas, "Liberation Mono", Menlo, ui-monospace, monospace;
     font-size: 0.88rem;
+  }
+
+  .body-editor.live-body-editor,
+  .body-shell.source-only .body-editor {
+    border-color: transparent;
+    border-radius: 0;
+    background: transparent;
+    padding: 0.12rem 0 0;
+    box-shadow: none;
+  }
+
+  .body-editor.live-body-editor:focus,
+  .body-shell.source-only .body-editor:focus {
+    border-color: transparent;
+    box-shadow: none;
   }
 
   .markdown-preview {
