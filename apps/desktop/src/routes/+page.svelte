@@ -28,7 +28,7 @@
     NoteSource,
     NoteSummary,
     PanelMode,
-    PanelStackAnchor,
+    ToolAnchor,
     WorkspaceSummary
   } from '$lib/types';
 
@@ -38,8 +38,14 @@
     id: RibbonToolId;
     label: string;
     dock: DockSide;
+    anchor: ToolAnchor;
   };
   type ToolDocks = Record<RibbonToolId, DockSide>;
+  type ToolAnchors = Record<RibbonToolId, ToolAnchor>;
+  type ToolZone = {
+    anchor: ToolAnchor;
+    tools: RibbonTool[];
+  };
   type HudToolId = 'notes' | 'outline';
   type HudHeights = Record<HudToolId, number>;
   type PropertyRow = {
@@ -64,6 +70,12 @@
     settings: 'left',
     outline: 'right'
   };
+  const defaultToolAnchors: ToolAnchors = {
+    notes: 'top',
+    'new-note': 'top',
+    settings: 'bottom',
+    outline: 'top'
+  };
   const defaultHudHeights: HudHeights = {
     notes: 320,
     outline: 190
@@ -73,9 +85,8 @@
   let rightPanelWidth = 255;
   let leftPanelMode: PanelMode = 'view';
   let rightPanelMode: PanelMode = 'view';
-  let leftPanelStackAnchor: PanelStackAnchor = 'bottom';
-  let rightPanelStackAnchor: PanelStackAnchor = 'top';
   let toolDocks: ToolDocks = { ...defaultToolDocks };
+  let toolAnchors: ToolAnchors = { ...defaultToolAnchors };
   let hudHeights: HudHeights = { ...defaultHudHeights };
   let workspacePath = '';
   let workspace: WorkspaceSummary | null = null;
@@ -95,9 +106,11 @@
   $: selectedTitle = notes.find((note) => note.id === selectedId)?.title ?? 'Untitled';
   $: leftPanelColumnWidth = leftPanelMode === 'ribbon' ? ribbonPanelWidth : leftPanelWidth;
   $: rightPanelColumnWidth = rightPanelMode === 'ribbon' ? ribbonPanelWidth : rightPanelWidth;
-  $: ribbonTools = buildRibbonTools(toolDocks);
+  $: ribbonTools = buildRibbonTools(toolDocks, toolAnchors);
   $: leftRibbonTools = ribbonTools.filter((tool) => tool.dock === 'left');
   $: rightRibbonTools = ribbonTools.filter((tool) => tool.dock === 'right');
+  $: leftToolZones = buildToolZones(leftRibbonTools);
+  $: rightToolZones = buildToolZones(rightRibbonTools);
   $: leftHasHudTool = hasHudTool(leftRibbonTools);
   $: rightHasHudTool = hasHudTool(rightRibbonTools);
   $: outlineItems = extractOutline(extractMarkdownBody(noteSource));
@@ -359,8 +372,9 @@
     return mode === 'ribbon' ? 'ribbon' : 'view';
   }
 
-  function normalizePanelStackAnchor(anchor: string): PanelStackAnchor {
-    return anchor === 'bottom' ? 'bottom' : 'top';
+  function normalizeToolAnchor(anchor: string): ToolAnchor {
+    if (anchor === 'center' || anchor === 'bottom') return anchor;
+    return 'top';
   }
 
   function normalizeDockSide(side: string): DockSide {
@@ -373,13 +387,17 @@
     rightPanelWidth = clamp(settings.right_panel_width, minRightPanelWidth, maxRightPanelWidth);
     leftPanelMode = normalizePanelMode(settings.left_panel_mode);
     rightPanelMode = normalizePanelMode(settings.right_panel_mode);
-    leftPanelStackAnchor = normalizePanelStackAnchor(settings.left_panel_stack_anchor);
-    rightPanelStackAnchor = normalizePanelStackAnchor(settings.right_panel_stack_anchor);
     toolDocks = {
       notes: normalizeDockSide(settings.notes_dock),
       'new-note': normalizeDockSide(settings.new_note_dock),
       settings: normalizeDockSide(settings.settings_dock),
       outline: normalizeDockSide(settings.outline_dock)
+    };
+    toolAnchors = {
+      notes: normalizeToolAnchor(settings.notes_anchor),
+      'new-note': normalizeToolAnchor(settings.new_note_anchor),
+      settings: normalizeToolAnchor(settings.settings_anchor),
+      outline: normalizeToolAnchor(settings.outline_anchor)
     };
     hudHeights = {
       notes: clamp(settings.notes_hud_height, minHudHeight, maxHudHeight),
@@ -387,12 +405,20 @@
     };
   }
 
-  function buildRibbonTools(docks: ToolDocks): RibbonTool[] {
+  function buildRibbonTools(docks: ToolDocks, anchors: ToolAnchors): RibbonTool[] {
     return [
-      { id: 'notes', label: 'Notes', dock: docks.notes },
-      { id: 'new-note', label: 'New note', dock: docks['new-note'] },
-      { id: 'settings', label: 'Settings', dock: docks.settings },
-      { id: 'outline', label: 'Outline', dock: docks.outline }
+      { id: 'notes', label: 'Notes', dock: docks.notes, anchor: anchors.notes },
+      { id: 'new-note', label: 'New note', dock: docks['new-note'], anchor: anchors['new-note'] },
+      { id: 'settings', label: 'Settings', dock: docks.settings, anchor: anchors.settings },
+      { id: 'outline', label: 'Outline', dock: docks.outline, anchor: anchors.outline }
+    ];
+  }
+
+  function buildToolZones(tools: RibbonTool[]): ToolZone[] {
+    return [
+      { anchor: 'top', tools: tools.filter((tool) => tool.anchor === 'top') },
+      { anchor: 'center', tools: tools.filter((tool) => tool.anchor === 'center') },
+      { anchor: 'bottom', tools: tools.filter((tool) => tool.anchor === 'bottom') }
     ];
   }
 
@@ -415,25 +441,6 @@
     }
   }
 
-  async function setPanelStackAnchor(panel: 'left' | 'right', anchor: PanelStackAnchor) {
-    const previousLeftPanelStackAnchor = leftPanelStackAnchor;
-    const previousRightPanelStackAnchor = rightPanelStackAnchor;
-
-    if (panel === 'left') {
-      leftPanelStackAnchor = anchor;
-    } else {
-      rightPanelStackAnchor = anchor;
-    }
-
-    try {
-      await persistUiSettings();
-    } catch (error) {
-      leftPanelStackAnchor = previousLeftPanelStackAnchor;
-      rightPanelStackAnchor = previousRightPanelStackAnchor;
-      status = error instanceof Error ? error.message : String(error);
-    }
-  }
-
   async function setToolDock(tool: RibbonToolId, side: DockSide) {
     const previousToolDocks = toolDocks;
     toolDocks = { ...toolDocks, [tool]: side };
@@ -443,6 +450,19 @@
       status = `${toolLabel(tool)} moved to ${side} panel.`;
     } catch (error) {
       toolDocks = previousToolDocks;
+      status = error instanceof Error ? error.message : String(error);
+    }
+  }
+
+  async function setToolAnchor(tool: RibbonToolId, anchor: ToolAnchor) {
+    const previousToolAnchors = toolAnchors;
+    toolAnchors = { ...toolAnchors, [tool]: anchor };
+
+    try {
+      await persistUiSettings();
+      status = `${toolLabel(tool)} anchored ${anchor}.`;
+    } catch (error) {
+      toolAnchors = previousToolAnchors;
       status = error instanceof Error ? error.message : String(error);
     }
   }
@@ -524,12 +544,14 @@
       right_panel_width: Math.round(rightPanelWidth),
       left_panel_mode: leftPanelMode,
       right_panel_mode: rightPanelMode,
-      left_panel_stack_anchor: leftPanelStackAnchor,
-      right_panel_stack_anchor: rightPanelStackAnchor,
       notes_dock: toolDocks.notes,
       new_note_dock: toolDocks['new-note'],
       settings_dock: toolDocks.settings,
       outline_dock: toolDocks.outline,
+      notes_anchor: toolAnchors.notes,
+      new_note_anchor: toolAnchors['new-note'],
+      settings_anchor: toolAnchors.settings,
+      outline_anchor: toolAnchors.outline,
       notes_hud_height: hudHeights.notes,
       outline_hud_height: hudHeights.outline
     });
@@ -706,35 +728,38 @@
   >
     {#if leftPanelMode === 'ribbon'}
       <nav
-        class:stack-bottom={leftPanelStackAnchor === 'bottom'}
         class="panel-ribbon"
         aria-label="Left ribbon"
         on:dragover={allowRibbonDrop}
         on:drop={(event) => handleRibbonDrop(event, 'left')}
       >
-        {#each leftRibbonTools as tool}
-          <button
-            class:active={tool.id === 'settings' && settingsOpen}
-            class:drag-enabled={true}
-            class="ribbon-button"
-            aria-label={tool.label}
-            aria-disabled={tool.id === 'new-note' && !workspace}
-            title={`${tool.label} - drag to move`}
-            draggable="true"
-            on:click={() => runRibbonTool(tool.id)}
-            on:dblclick={() => moveToolToOppositeDock(tool.id)}
-            on:dragstart={(event) => handleRibbonDragStart(event, tool.id)}
-          >
-            {#if tool.id === 'notes'}
-              <FileText size={17} />
-            {:else if tool.id === 'new-note'}
-              <Plus size={17} />
-            {:else if tool.id === 'settings'}
-              <Settings size={17} />
-            {:else if tool.id === 'outline'}
-              <ListTree size={17} />
-            {/if}
-          </button>
+        {#each leftToolZones as zone}
+          <div class:center-zone={zone.anchor === 'center'} class:bottom-zone={zone.anchor === 'bottom'} class="tool-zone">
+            {#each zone.tools as tool}
+              <button
+                class:active={tool.id === 'settings' && settingsOpen}
+                class:drag-enabled={true}
+                class="ribbon-button"
+                aria-label={tool.label}
+                aria-disabled={tool.id === 'new-note' && !workspace}
+                title={`${tool.label} - drag to move`}
+                draggable="true"
+                on:click={() => runRibbonTool(tool.id)}
+                on:dblclick={() => moveToolToOppositeDock(tool.id)}
+                on:dragstart={(event) => handleRibbonDragStart(event, tool.id)}
+              >
+                {#if tool.id === 'notes'}
+                  <FileText size={17} />
+                {:else if tool.id === 'new-note'}
+                  <Plus size={17} />
+                {:else if tool.id === 'settings'}
+                  <Settings size={17} />
+                {:else if tool.id === 'outline'}
+                  <ListTree size={17} />
+                {/if}
+              </button>
+            {/each}
+          </div>
         {/each}
       </nav>
     {:else}
@@ -745,9 +770,11 @@
         </div>
       </div>
 
-      <div class:stack-bottom={leftPanelStackAnchor === 'bottom'} class="panel-tool-stack" aria-label="Left panel tools">
-        {#each leftRibbonTools as tool}
-          <section class="panel-tool-group">
+      <div class="panel-tool-stack" aria-label="Left panel tools">
+        {#each leftToolZones as zone}
+          <div class:center-zone={zone.anchor === 'center'} class:bottom-zone={zone.anchor === 'bottom'} class="tool-zone">
+            {#each zone.tools as tool}
+              <section class="panel-tool-group">
             <button
               class:active={tool.id === 'settings' && settingsOpen}
               class:drag-enabled={true}
@@ -833,7 +860,9 @@
                 on:keydown={(event) => handleHudResizeKeydown(event, 'outline')}
               ></button>
             {/if}
-          </section>
+              </section>
+            {/each}
+          </div>
         {/each}
 
         {#if !leftHasHudTool}
@@ -901,7 +930,7 @@
             <div class="setting-row">
               <div>
                 <span>Left panel</span>
-                <p>{leftPanelMode === 'ribbon' ? 'Ribbon' : `${leftPanelWidth}px`} · {leftPanelStackAnchor}</p>
+                <p>{leftPanelMode === 'ribbon' ? 'Ribbon' : `${leftPanelWidth}px`}</p>
               </div>
               <div class="segmented-control" aria-label="Left panel mode">
                 <button class:active={leftPanelMode === 'view'} on:click={() => setPanelMode('left', 'view')}>View</button>
@@ -911,34 +940,12 @@
 
             <div class="setting-row">
               <div>
-                <span>Left stack</span>
-                <p>{leftPanelStackAnchor === 'bottom' ? 'Anchored bottom' : 'Anchored top'}</p>
-              </div>
-              <div class="segmented-control" aria-label="Left panel stack anchor">
-                <button class:active={leftPanelStackAnchor === 'top'} on:click={() => setPanelStackAnchor('left', 'top')}>Top</button>
-                <button class:active={leftPanelStackAnchor === 'bottom'} on:click={() => setPanelStackAnchor('left', 'bottom')}>Bottom</button>
-              </div>
-            </div>
-
-            <div class="setting-row">
-              <div>
                 <span>Right panel</span>
-                <p>{rightPanelMode === 'ribbon' ? 'Ribbon' : `${rightPanelWidth}px`} · {rightPanelStackAnchor}</p>
+                <p>{rightPanelMode === 'ribbon' ? 'Ribbon' : `${rightPanelWidth}px`}</p>
               </div>
               <div class="segmented-control" aria-label="Right panel mode">
                 <button class:active={rightPanelMode === 'view'} on:click={() => setPanelMode('right', 'view')}>View</button>
                 <button class:active={rightPanelMode === 'ribbon'} on:click={() => setPanelMode('right', 'ribbon')}>Ribbon</button>
-              </div>
-            </div>
-
-            <div class="setting-row">
-              <div>
-                <span>Right stack</span>
-                <p>{rightPanelStackAnchor === 'bottom' ? 'Anchored bottom' : 'Anchored top'}</p>
-              </div>
-              <div class="segmented-control" aria-label="Right panel stack anchor">
-                <button class:active={rightPanelStackAnchor === 'top'} on:click={() => setPanelStackAnchor('right', 'top')}>Top</button>
-                <button class:active={rightPanelStackAnchor === 'bottom'} on:click={() => setPanelStackAnchor('right', 'bottom')}>Bottom</button>
               </div>
             </div>
 
@@ -948,11 +955,18 @@
                 <div class="setting-row">
                   <div>
                     <span>{tool.label}</span>
-                    <p>{tool.dock === 'left' ? 'Left panel' : 'Right panel'}</p>
+                    <p>{tool.dock === 'left' ? 'Left panel' : 'Right panel'} · {tool.anchor}</p>
                   </div>
-                  <div class="segmented-control" aria-label={`${tool.label} dock`}>
-                    <button class:active={tool.dock === 'left'} on:click={() => setToolDock(tool.id, 'left')}>Left</button>
-                    <button class:active={tool.dock === 'right'} on:click={() => setToolDock(tool.id, 'right')}>Right</button>
+                  <div class="setting-actions">
+                    <div class="segmented-control" aria-label={`${tool.label} dock`}>
+                      <button class:active={tool.dock === 'left'} on:click={() => setToolDock(tool.id, 'left')}>Left</button>
+                      <button class:active={tool.dock === 'right'} on:click={() => setToolDock(tool.id, 'right')}>Right</button>
+                    </div>
+                    <div class="segmented-control three-options" aria-label={`${tool.label} anchor`}>
+                      <button class:active={tool.anchor === 'top'} on:click={() => setToolAnchor(tool.id, 'top')}>Top</button>
+                      <button class:active={tool.anchor === 'center'} on:click={() => setToolAnchor(tool.id, 'center')}>Center</button>
+                      <button class:active={tool.anchor === 'bottom'} on:click={() => setToolAnchor(tool.id, 'bottom')}>Bottom</button>
+                    </div>
                   </div>
                 </div>
               {/each}
@@ -1092,41 +1106,46 @@
   >
     {#if rightPanelMode === 'ribbon'}
       <nav
-        class:stack-bottom={rightPanelStackAnchor === 'bottom'}
         class="panel-ribbon"
         aria-label="Right ribbon"
         on:dragover={allowRibbonDrop}
         on:drop={(event) => handleRibbonDrop(event, 'right')}
       >
-        {#each rightRibbonTools as tool}
-          <button
-            class:active={tool.id === 'settings' && settingsOpen}
-            class:drag-enabled={true}
-            class="ribbon-button"
-            aria-label={tool.label}
-            aria-disabled={tool.id === 'new-note' && !workspace}
-            title={`${tool.label} - drag to move`}
-            draggable="true"
-            on:click={() => runRibbonTool(tool.id)}
-            on:dblclick={() => moveToolToOppositeDock(tool.id)}
-            on:dragstart={(event) => handleRibbonDragStart(event, tool.id)}
-          >
-            {#if tool.id === 'notes'}
-              <FileText size={17} />
-            {:else if tool.id === 'new-note'}
-              <Plus size={17} />
-            {:else if tool.id === 'settings'}
-              <Settings size={17} />
-            {:else if tool.id === 'outline'}
-              <ListTree size={17} />
-            {/if}
-          </button>
+        {#each rightToolZones as zone}
+          <div class:center-zone={zone.anchor === 'center'} class:bottom-zone={zone.anchor === 'bottom'} class="tool-zone">
+            {#each zone.tools as tool}
+              <button
+                class:active={tool.id === 'settings' && settingsOpen}
+                class:drag-enabled={true}
+                class="ribbon-button"
+                aria-label={tool.label}
+                aria-disabled={tool.id === 'new-note' && !workspace}
+                title={`${tool.label} - drag to move`}
+                draggable="true"
+                on:click={() => runRibbonTool(tool.id)}
+                on:dblclick={() => moveToolToOppositeDock(tool.id)}
+                on:dragstart={(event) => handleRibbonDragStart(event, tool.id)}
+              >
+                {#if tool.id === 'notes'}
+                  <FileText size={17} />
+                {:else if tool.id === 'new-note'}
+                  <Plus size={17} />
+                {:else if tool.id === 'settings'}
+                  <Settings size={17} />
+                {:else if tool.id === 'outline'}
+                  <ListTree size={17} />
+                {/if}
+              </button>
+            {/each}
+          </div>
         {/each}
       </nav>
     {:else}
-      <div class:stack-bottom={rightPanelStackAnchor === 'bottom'} class="panel-tool-stack" aria-label="Right panel tools">
-        {#each rightRibbonTools as tool}
-          <section class="panel-tool-group">
+      <div class="panel-tool-stack" aria-label="Right panel tools">
+        {#each rightToolZones as zone}
+          <div class:center-zone={zone.anchor === 'center'} class:bottom-zone={zone.anchor === 'bottom'} class="tool-zone">
+            {#each zone.tools as tool}
+              <section class="panel-tool-group">
             <button
               class:active={tool.id === 'settings' && settingsOpen}
               class:drag-enabled={true}
@@ -1212,7 +1231,9 @@
                 on:keydown={(event) => handleHudResizeKeydown(event, 'outline')}
               ></button>
             {/if}
-          </section>
+              </section>
+            {/each}
+          </div>
         {/each}
 
         {#if !rightHasHudTool}
@@ -1252,15 +1273,30 @@
 
   .panel-ribbon {
     display: grid;
-    align-content: start;
+    grid-template-rows: auto minmax(0, 1fr) auto;
     flex: 1 1 auto;
-    justify-items: center;
     gap: 0.36rem;
     width: 100%;
     min-height: 0;
   }
 
-  .panel-ribbon.stack-bottom {
+  .tool-zone {
+    display: grid;
+    align-content: start;
+    gap: 0.32rem;
+    min-height: 0;
+    width: 100%;
+  }
+
+  .panel-ribbon .tool-zone {
+    justify-items: center;
+  }
+
+  .tool-zone.center-zone {
+    align-content: center;
+  }
+
+  .tool-zone.bottom-zone {
     align-content: end;
   }
 
@@ -1297,16 +1333,12 @@
   }
 
   .panel-tool-stack {
-    display: flex;
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr) auto;
     flex: 1 1 auto;
     min-height: 0;
-    flex-direction: column;
     gap: 0.38rem;
     overflow: auto;
-  }
-
-  .panel-tool-stack.stack-bottom {
-    justify-content: flex-end;
   }
 
   .panel-tool-group {
@@ -1629,6 +1661,13 @@
     min-height: 2.35rem;
   }
 
+  .setting-actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: end;
+    gap: 0.34rem;
+  }
+
   .segmented-control {
     display: inline-grid;
     grid-template-columns: repeat(2, auto);
@@ -1637,6 +1676,10 @@
     border-radius: 5px;
     background: #0b0f14;
     padding: 0.12rem;
+  }
+
+  .segmented-control.three-options {
+    grid-template-columns: repeat(3, auto);
   }
 
   .segmented-control button {

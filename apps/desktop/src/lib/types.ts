@@ -10,18 +10,20 @@ export type AppSettings = {
   right_panel_width: number;
   left_panel_mode: PanelMode;
   right_panel_mode: PanelMode;
-  left_panel_stack_anchor: PanelStackAnchor;
-  right_panel_stack_anchor: PanelStackAnchor;
   notes_dock: DockSide;
   new_note_dock: DockSide;
   settings_dock: DockSide;
   outline_dock: DockSide;
+  notes_anchor: ToolAnchor;
+  new_note_anchor: ToolAnchor;
+  settings_anchor: ToolAnchor;
+  outline_anchor: ToolAnchor;
   notes_hud_height: number;
   outline_hud_height: number;
 };
 
 export type PanelMode = 'view' | 'ribbon';
-export type PanelStackAnchor = 'top' | 'bottom';
+export type ToolAnchor = 'top' | 'center' | 'bottom';
 export type DockSide = 'left' | 'right';
 
 export type UpdateAppSettingsInput = {
@@ -29,12 +31,14 @@ export type UpdateAppSettingsInput = {
   right_panel_width: number;
   left_panel_mode: PanelMode;
   right_panel_mode: PanelMode;
-  left_panel_stack_anchor: PanelStackAnchor;
-  right_panel_stack_anchor: PanelStackAnchor;
   notes_dock: DockSide;
   new_note_dock: DockSide;
   settings_dock: DockSide;
   outline_dock: DockSide;
+  notes_anchor: ToolAnchor;
+  new_note_anchor: ToolAnchor;
+  settings_anchor: ToolAnchor;
+  outline_anchor: ToolAnchor;
   notes_hud_height: number;
   outline_hud_height: number;
 };

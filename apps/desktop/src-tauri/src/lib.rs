@@ -28,10 +28,6 @@ struct AppSettings {
     left_panel_mode: String,
     #[serde(default = "default_panel_mode")]
     right_panel_mode: String,
-    #[serde(default = "default_left_panel_stack_anchor")]
-    left_panel_stack_anchor: String,
-    #[serde(default = "default_right_panel_stack_anchor")]
-    right_panel_stack_anchor: String,
     #[serde(default = "default_left_dock")]
     notes_dock: String,
     #[serde(default = "default_left_dock")]
@@ -40,6 +36,14 @@ struct AppSettings {
     settings_dock: String,
     #[serde(default = "default_right_dock")]
     outline_dock: String,
+    #[serde(default = "default_top_tool_anchor")]
+    notes_anchor: String,
+    #[serde(default = "default_top_tool_anchor")]
+    new_note_anchor: String,
+    #[serde(default = "default_bottom_tool_anchor")]
+    settings_anchor: String,
+    #[serde(default = "default_top_tool_anchor")]
+    outline_anchor: String,
     #[serde(default = "default_notes_hud_height")]
     notes_hud_height: u16,
     #[serde(default = "default_outline_hud_height")]
@@ -54,12 +58,14 @@ impl Default for AppSettings {
             right_panel_width: default_right_panel_width(),
             left_panel_mode: default_panel_mode(),
             right_panel_mode: default_panel_mode(),
-            left_panel_stack_anchor: default_left_panel_stack_anchor(),
-            right_panel_stack_anchor: default_right_panel_stack_anchor(),
             notes_dock: default_left_dock(),
             new_note_dock: default_left_dock(),
             settings_dock: default_left_dock(),
             outline_dock: default_right_dock(),
+            notes_anchor: default_top_tool_anchor(),
+            new_note_anchor: default_top_tool_anchor(),
+            settings_anchor: default_bottom_tool_anchor(),
+            outline_anchor: default_top_tool_anchor(),
             notes_hud_height: default_notes_hud_height(),
             outline_hud_height: default_outline_hud_height(),
         }
@@ -74,12 +80,14 @@ struct AppSettingsSummary {
     right_panel_width: u16,
     left_panel_mode: String,
     right_panel_mode: String,
-    left_panel_stack_anchor: String,
-    right_panel_stack_anchor: String,
     notes_dock: String,
     new_note_dock: String,
     settings_dock: String,
     outline_dock: String,
+    notes_anchor: String,
+    new_note_anchor: String,
+    settings_anchor: String,
+    outline_anchor: String,
     notes_hud_height: u16,
     outline_hud_height: u16,
 }
@@ -90,12 +98,14 @@ struct UpdateAppSettingsInput {
     right_panel_width: u16,
     left_panel_mode: String,
     right_panel_mode: String,
-    left_panel_stack_anchor: String,
-    right_panel_stack_anchor: String,
     notes_dock: String,
     new_note_dock: String,
     settings_dock: String,
     outline_dock: String,
+    notes_anchor: String,
+    new_note_anchor: String,
+    settings_anchor: String,
+    outline_anchor: String,
     notes_hud_height: u16,
     outline_hud_height: u16,
 }
@@ -138,12 +148,14 @@ fn get_app_settings(state: State<'_, AppState>) -> Result<AppSettingsSummary, St
         right_panel_width: settings.right_panel_width,
         left_panel_mode: settings.left_panel_mode,
         right_panel_mode: settings.right_panel_mode,
-        left_panel_stack_anchor: settings.left_panel_stack_anchor,
-        right_panel_stack_anchor: settings.right_panel_stack_anchor,
         notes_dock: settings.notes_dock,
         new_note_dock: settings.new_note_dock,
         settings_dock: settings.settings_dock,
         outline_dock: settings.outline_dock,
+        notes_anchor: settings.notes_anchor,
+        new_note_anchor: settings.new_note_anchor,
+        settings_anchor: settings.settings_anchor,
+        outline_anchor: settings.outline_anchor,
         notes_hud_height: settings.notes_hud_height,
         outline_hud_height: settings.outline_hud_height,
     })
@@ -160,14 +172,14 @@ fn update_app_settings(
         settings.right_panel_width = input.right_panel_width.clamp(210, 420);
         settings.left_panel_mode = normalize_panel_mode(&input.left_panel_mode).to_string();
         settings.right_panel_mode = normalize_panel_mode(&input.right_panel_mode).to_string();
-        settings.left_panel_stack_anchor =
-            normalize_panel_stack_anchor(&input.left_panel_stack_anchor).to_string();
-        settings.right_panel_stack_anchor =
-            normalize_panel_stack_anchor(&input.right_panel_stack_anchor).to_string();
         settings.notes_dock = normalize_dock_side(&input.notes_dock).to_string();
         settings.new_note_dock = normalize_dock_side(&input.new_note_dock).to_string();
         settings.settings_dock = normalize_dock_side(&input.settings_dock).to_string();
         settings.outline_dock = normalize_dock_side(&input.outline_dock).to_string();
+        settings.notes_anchor = normalize_tool_anchor(&input.notes_anchor).to_string();
+        settings.new_note_anchor = normalize_tool_anchor(&input.new_note_anchor).to_string();
+        settings.settings_anchor = normalize_tool_anchor(&input.settings_anchor).to_string();
+        settings.outline_anchor = normalize_tool_anchor(&input.outline_anchor).to_string();
         settings.notes_hud_height = input.notes_hud_height.clamp(96, 720);
         settings.outline_hud_height = input.outline_hud_height.clamp(96, 720);
     }
@@ -276,12 +288,12 @@ fn default_panel_mode() -> String {
     "view".to_string()
 }
 
-fn default_left_panel_stack_anchor() -> String {
-    "bottom".to_string()
+fn default_top_tool_anchor() -> String {
+    "top".to_string()
 }
 
-fn default_right_panel_stack_anchor() -> String {
-    "top".to_string()
+fn default_bottom_tool_anchor() -> String {
+    "bottom".to_string()
 }
 
 fn default_left_dock() -> String {
@@ -307,8 +319,9 @@ fn normalize_panel_mode(mode: &str) -> &str {
     }
 }
 
-fn normalize_panel_stack_anchor(anchor: &str) -> &str {
+fn normalize_tool_anchor(anchor: &str) -> &str {
     match anchor {
+        "center" => "center",
         "bottom" => "bottom",
         _ => "top",
     }
