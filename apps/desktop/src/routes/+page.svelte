@@ -1,5 +1,16 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import {
+    FileText,
+    FolderOpen,
+    LayoutPanelLeft,
+    ListTree,
+    Plus,
+    Save,
+    Settings,
+    SlidersHorizontal,
+    X
+  } from '@lucide/svelte';
   import DOMPurify from 'dompurify';
   import { marked } from 'marked';
   import MarkdownPlusEditor from '$lib/MarkdownPlusEditor.svelte';
@@ -10,9 +21,10 @@
     listNotes,
     openWorkspace,
     saveNoteSource,
-    selectWorkspaceDirectory
+    selectWorkspaceDirectory,
+    updateAppSettings
   } from '$lib/api';
-  import type { NoteSource, NoteSummary, WorkspaceSummary } from '$lib/types';
+  import type { NoteSource, NoteSummary, PanelMode, WorkspaceSummary } from '$lib/types';
 
   type EditorMode = 'live' | 'source' | 'split' | 'preview';
   type PropertyRow = {
@@ -26,8 +38,14 @@
 
   const minLeftPanelWidth = 220;
   const maxLeftPanelWidth = 420;
+  const minRightPanelWidth = 210;
+  const maxRightPanelWidth = 420;
+  const ribbonPanelWidth = 46;
 
   let leftPanelWidth = 285;
+  let rightPanelWidth = 255;
+  let leftPanelMode: PanelMode = 'view';
+  let rightPanelMode: PanelMode = 'view';
   let workspacePath = '';
   let workspace: WorkspaceSummary | null = null;
   let notes: NoteSummary[] = [];
@@ -44,6 +62,8 @@
 
   $: selectedId = selectedNoteSource?.id;
   $: selectedTitle = notes.find((note) => note.id === selectedId)?.title ?? 'Untitled';
+  $: leftPanelColumnWidth = leftPanelMode === 'ribbon' ? ribbonPanelWidth : leftPanelWidth;
+  $: rightPanelColumnWidth = rightPanelMode === 'ribbon' ? ribbonPanelWidth : rightPanelWidth;
   $: outlineItems = extractOutline(extractMarkdownBody(noteSource));
   $: markdownHtml = DOMPurify.sanitize(
     marked.parse(markdownPlusPreviewSource(extractMarkdownBody(noteSource)), {
@@ -55,6 +75,10 @@
   onMount(async () => {
     const settings = await getAppSettings();
     portableRoot = settings.portable_root;
+    leftPanelWidth = clamp(settings.left_panel_width, minLeftPanelWidth, maxLeftPanelWidth);
+    rightPanelWidth = clamp(settings.right_panel_width, minRightPanelWidth, maxRightPanelWidth);
+    leftPanelMode = normalizePanelMode(settings.left_panel_mode);
+    rightPanelMode = normalizePanelMode(settings.right_panel_mode);
 
     if (settings.last_workspace_path) {
       workspacePath = settings.last_workspace_path;
@@ -169,6 +193,7 @@
   }
 
   function startLeftPanelResize(event: PointerEvent) {
+    if (leftPanelMode === 'ribbon') return;
     event.preventDefault();
 
     const startX = event.clientX;
@@ -184,6 +209,7 @@
       window.removeEventListener('pointermove', resizePanel);
       window.removeEventListener('pointerup', stopResize);
       window.removeEventListener('pointercancel', stopResize);
+      persistUiSettings();
     };
 
     window.addEventListener('pointermove', resizePanel);
@@ -192,19 +218,95 @@
   }
 
   function handleLeftPanelResizeKeydown(event: KeyboardEvent) {
+    if (leftPanelMode === 'ribbon') return;
+
     if (event.key === 'ArrowLeft') {
       event.preventDefault();
       leftPanelWidth = clamp(leftPanelWidth - 12, minLeftPanelWidth, maxLeftPanelWidth);
+      persistUiSettings();
     }
 
     if (event.key === 'ArrowRight') {
       event.preventDefault();
       leftPanelWidth = clamp(leftPanelWidth + 12, minLeftPanelWidth, maxLeftPanelWidth);
+      persistUiSettings();
+    }
+  }
+
+  function startRightPanelResize(event: PointerEvent) {
+    if (rightPanelMode === 'ribbon') return;
+    event.preventDefault();
+
+    const startX = event.clientX;
+    const startWidth = rightPanelWidth;
+    document.body.classList.add('is-resizing-panel');
+
+    const resizePanel = (moveEvent: PointerEvent) => {
+      rightPanelWidth = clamp(startWidth - (moveEvent.clientX - startX), minRightPanelWidth, maxRightPanelWidth);
+    };
+
+    const stopResize = () => {
+      document.body.classList.remove('is-resizing-panel');
+      window.removeEventListener('pointermove', resizePanel);
+      window.removeEventListener('pointerup', stopResize);
+      window.removeEventListener('pointercancel', stopResize);
+      persistUiSettings();
+    };
+
+    window.addEventListener('pointermove', resizePanel);
+    window.addEventListener('pointerup', stopResize);
+    window.addEventListener('pointercancel', stopResize);
+  }
+
+  function handleRightPanelResizeKeydown(event: KeyboardEvent) {
+    if (rightPanelMode === 'ribbon') return;
+
+    if (event.key === 'ArrowLeft') {
+      event.preventDefault();
+      rightPanelWidth = clamp(rightPanelWidth + 12, minRightPanelWidth, maxRightPanelWidth);
+      persistUiSettings();
+    }
+
+    if (event.key === 'ArrowRight') {
+      event.preventDefault();
+      rightPanelWidth = clamp(rightPanelWidth - 12, minRightPanelWidth, maxRightPanelWidth);
+      persistUiSettings();
     }
   }
 
   function clamp(value: number, min: number, max: number): number {
     return Math.min(max, Math.max(min, value));
+  }
+
+  function normalizePanelMode(mode: string): PanelMode {
+    return mode === 'ribbon' ? 'ribbon' : 'view';
+  }
+
+  async function setPanelMode(panel: 'left' | 'right', mode: PanelMode) {
+    if (panel === 'left') {
+      leftPanelMode = mode;
+    } else {
+      rightPanelMode = mode;
+    }
+
+    await persistUiSettings();
+  }
+
+  async function persistUiSettings() {
+    try {
+      const settings = await updateAppSettings({
+        left_panel_width: Math.round(leftPanelWidth),
+        right_panel_width: Math.round(rightPanelWidth),
+        left_panel_mode: leftPanelMode,
+        right_panel_mode: rightPanelMode
+      });
+      leftPanelWidth = clamp(settings.left_panel_width, minLeftPanelWidth, maxLeftPanelWidth);
+      rightPanelWidth = clamp(settings.right_panel_width, minRightPanelWidth, maxRightPanelWidth);
+      leftPanelMode = normalizePanelMode(settings.left_panel_mode);
+      rightPanelMode = normalizePanelMode(settings.right_panel_mode);
+    } catch (error) {
+      status = error instanceof Error ? error.message : String(error);
+    }
   }
 
   function syncLiveFieldsFromSource() {
@@ -359,93 +461,160 @@
   <title>MarkdownPlus</title>
 </svelte:head>
 
-<main class="app-shell" style={`--left-panel-width: ${leftPanelWidth}px;`}>
-  <aside class="sidebar">
-    <div class="brand" data-tauri-drag-region>
-      <div>
-        <h1>MarkdownPlus</h1>
-        <p>Local .mdp workspace</p>
-      </div>
-    </div>
-
-    {#if workspace}
-      <section class="notes-header">
-        <div>
-          <span class="count">{notes.length}</span>
-          <span>notes</span>
-        </div>
-        <button on:click={createNewNote}>New</button>
-      </section>
-
-      <nav class="notes-list" aria-label="Notes">
-        {#each notes as note}
-          <button
-            class:active={note.id === selectedId}
-            class="note-row"
-            on:click={() => selectNote(note.id)}
-          >
-            <span class="note-title">{note.title}</span>
-            <span class="note-meta">{note.note_type} · {new Date(note.updated_at).toLocaleString()}</span>
-          </button>
-        {/each}
+<main
+  class="app-shell"
+  style={`--left-panel-width: ${leftPanelColumnWidth}px; --right-panel-width: ${rightPanelColumnWidth}px;`}
+>
+  <aside class:ribbon-panel={leftPanelMode === 'ribbon'} class="sidebar">
+    {#if leftPanelMode === 'ribbon'}
+      <nav class="panel-ribbon" aria-label="Primary navigation" data-tauri-drag-region>
+        <button class="ribbon-button" aria-label="Notes" title="Notes" on:click={() => (settingsOpen = false)}>
+          <FileText size={17} />
+        </button>
+        <button class="ribbon-button" aria-label="New note" title="New note" on:click={createNewNote} disabled={!workspace}>
+          <Plus size={17} />
+        </button>
+        <button
+          class:active={settingsOpen}
+          class="ribbon-button"
+          aria-label="Settings"
+          title="Settings"
+          on:click={() => (settingsOpen = !settingsOpen)}
+        >
+          <Settings size={17} />
+        </button>
       </nav>
     {:else}
-      <div class="sidebar-empty">
-        Open Settings to choose a workspace.
+      <div class="brand" data-tauri-drag-region>
+        <div>
+          <h1>MarkdownPlus</h1>
+          <p>Local .mdp workspace</p>
+        </div>
       </div>
-    {/if}
 
-    <div class="sidebar-footer">
-      {#if settingsOpen}
-        <section class="settings-panel">
-          <div class="settings-heading">
-            <h2>Settings</h2>
-            <button class="icon-button" aria-label="Close settings" on:click={() => (settingsOpen = false)}>
-              X
-            </button>
+      {#if workspace}
+        <section class="notes-header">
+          <div>
+            <span class="count">{notes.length}</span>
+            <span>notes</span>
           </div>
-
-          <label for="workspace-path">Workspace folder</label>
-          <div class="workspace-row">
-            <input
-              id="workspace-path"
-              bind:value={workspacePath}
-              placeholder="/home/lua/MarkdownPlus Workspace"
-            />
-            <button on:click={browseWorkspace} disabled={browsing}>
-              {browsing ? '...' : 'Browse'}
-            </button>
-            <button class="primary" on:click={openCurrentWorkspace}>Open</button>
-          </div>
-          {#if portableRoot}
-            <p class="settings-note">Portable app data: {portableRoot}</p>
-          {/if}
+          <button on:click={createNewNote}>New</button>
         </section>
+
+        <nav class="notes-list" aria-label="Notes">
+          {#each notes as note}
+            <button
+              class:active={note.id === selectedId}
+              class="note-row"
+              on:click={() => {
+                settingsOpen = false;
+                selectNote(note.id);
+              }}
+            >
+              <span class="note-title">{note.title}</span>
+              <span class="note-meta">{note.note_type} · {new Date(note.updated_at).toLocaleString()}</span>
+            </button>
+          {/each}
+        </nav>
+      {:else}
+        <div class="sidebar-empty">
+          Open Settings to choose a workspace.
+        </div>
       {/if}
 
-      <button class:active={settingsOpen} class="settings-button" on:click={() => (settingsOpen = !settingsOpen)}>
-        Settings
-      </button>
-    </div>
+      <div class="sidebar-footer">
+        <button class:active={settingsOpen} class="settings-button" on:click={() => (settingsOpen = !settingsOpen)}>
+          Settings
+        </button>
+      </div>
+    {/if}
   </aside>
 
   <button
     class="panel-resize-handle"
     type="button"
     aria-label="Resize left panel"
+    disabled={leftPanelMode === 'ribbon'}
     on:pointerdown={startLeftPanelResize}
     on:keydown={handleLeftPanelResizeKeydown}
   ></button>
 
   <section class="editor">
-    {#if selectedNoteSource}
+    {#if settingsOpen}
+      <div class="settings-view">
+        <header class="settings-view-header" data-tauri-drag-region>
+          <div>
+            <h2>Settings</h2>
+            <p>MarkdownPlusData</p>
+          </div>
+          <button class="icon-button" aria-label="Close settings" on:click={() => (settingsOpen = false)}>
+            <X size={15} />
+          </button>
+        </header>
+
+        <div class="settings-view-content">
+          <section class="settings-section">
+            <div class="settings-section-heading">
+              <FolderOpen size={16} />
+              <h3>Workspace</h3>
+            </div>
+
+            <label for="workspace-path">Workspace folder</label>
+            <div class="workspace-row">
+              <input
+                id="workspace-path"
+                bind:value={workspacePath}
+                placeholder="/home/lua/MarkdownPlus Workspace"
+              />
+              <button on:click={browseWorkspace} disabled={browsing}>
+                {browsing ? '...' : 'Browse'}
+              </button>
+              <button class="primary" on:click={openCurrentWorkspace}>Open</button>
+            </div>
+            {#if portableRoot}
+              <p class="settings-note">Portable app data: {portableRoot}</p>
+            {/if}
+          </section>
+
+          <section class="settings-section">
+            <div class="settings-section-heading">
+              <SlidersHorizontal size={16} />
+              <h3>Panels</h3>
+            </div>
+
+            <div class="setting-row">
+              <div>
+                <span>Left panel</span>
+                <p>{leftPanelMode === 'ribbon' ? 'Ribbon' : `${leftPanelWidth}px`}</p>
+              </div>
+              <div class="segmented-control" aria-label="Left panel mode">
+                <button class:active={leftPanelMode === 'view'} on:click={() => setPanelMode('left', 'view')}>View</button>
+                <button class:active={leftPanelMode === 'ribbon'} on:click={() => setPanelMode('left', 'ribbon')}>Ribbon</button>
+              </div>
+            </div>
+
+            <div class="setting-row">
+              <div>
+                <span>Right panel</span>
+                <p>{rightPanelMode === 'ribbon' ? 'Ribbon' : `${rightPanelWidth}px`}</p>
+              </div>
+              <div class="segmented-control" aria-label="Right panel mode">
+                <button class:active={rightPanelMode === 'view'} on:click={() => setPanelMode('right', 'view')}>View</button>
+                <button class:active={rightPanelMode === 'ribbon'} on:click={() => setPanelMode('right', 'ribbon')}>Ribbon</button>
+              </div>
+            </div>
+          </section>
+        </div>
+      </div>
+    {:else if selectedNoteSource}
       <div class="note-page">
         <header class="editor-header">
           <div>
             <h2>{selectedTitle}</h2>
             <p>{selectedNoteSource.id}</p>
           </div>
-          <button class="primary" disabled={saving} on:click={saveSelectedNote}>
+          <button class="primary save-button" disabled={saving} on:click={saveSelectedNote}>
+            <Save size={15} />
             {saving ? 'Saving' : 'Save'}
           </button>
         </header>
@@ -517,7 +686,7 @@
 
     <footer>
       <span>{status}</span>
-      {#if selectedNoteSource}
+      {#if selectedNoteSource && !settingsOpen}
         <div class="mode-group" aria-label="Editor mode">
           <button
             class:active={editorMode === 'live'}
@@ -552,23 +721,43 @@
     </footer>
   </section>
 
-  <aside class="right-panel">
-    <div class="right-panel-toolbar" data-tauri-drag-region>
-      <h2>Outline</h2>
-    </div>
+  <button
+    class="panel-resize-handle right-resize-handle"
+    type="button"
+    aria-label="Resize right panel"
+    disabled={rightPanelMode === 'ribbon'}
+    on:pointerdown={startRightPanelResize}
+    on:keydown={handleRightPanelResizeKeydown}
+  ></button>
 
-    {#if selectedNoteSource && outlineItems.length}
-      <nav class="outline-list" aria-label="Note outline">
-        {#each outlineItems as item}
-          <div class:level-two={item.level === 2} class:level-three={item.level === 3} class="outline-row">
-            {item.text}
-          </div>
-        {/each}
+  <aside class:ribbon-panel={rightPanelMode === 'ribbon'} class="right-panel">
+    {#if rightPanelMode === 'ribbon'}
+      <nav class="panel-ribbon" aria-label="Context panels" data-tauri-drag-region>
+        <button class="ribbon-button active" aria-label="Outline" title="Outline">
+          <ListTree size={17} />
+        </button>
+        <button class="ribbon-button" aria-label="Panel layout" title="Panel layout" on:click={() => (settingsOpen = true)}>
+          <LayoutPanelLeft size={17} />
+        </button>
       </nav>
     {:else}
-      <div class="right-panel-empty">
-        No headings found.
+      <div class="right-panel-toolbar" data-tauri-drag-region>
+        <h2>Outline</h2>
       </div>
+
+      {#if selectedNoteSource && outlineItems.length}
+        <nav class="outline-list" aria-label="Note outline">
+          {#each outlineItems as item}
+            <div class:level-two={item.level === 2} class:level-three={item.level === 3} class="outline-row">
+              {item.text}
+            </div>
+          {/each}
+        </nav>
+      {:else}
+        <div class="right-panel-empty">
+          No headings found.
+        </div>
+      {/if}
     {/if}
   </aside>
 </main>
@@ -576,7 +765,7 @@
 <style>
   .app-shell {
     display: grid;
-    grid-template-columns: var(--left-panel-width) 4px minmax(0, 1fr) minmax(210px, 255px);
+    grid-template-columns: var(--left-panel-width) 4px minmax(0, 1fr) 4px var(--right-panel-width);
     min-height: 100vh;
     max-height: 100vh;
     background: #0d1117;
@@ -589,6 +778,47 @@
     background: #0b0f14;
     padding: 0.72rem;
     min-height: 0;
+  }
+
+  .sidebar.ribbon-panel,
+  .right-panel.ribbon-panel {
+    grid-template-rows: minmax(0, 1fr);
+    justify-items: center;
+    gap: 0;
+    padding: 0.55rem 0.28rem;
+  }
+
+  .panel-ribbon {
+    display: grid;
+    align-content: start;
+    justify-items: center;
+    gap: 0.36rem;
+    width: 100%;
+    min-height: 0;
+  }
+
+  .ribbon-button {
+    display: grid;
+    place-items: center;
+    width: 2rem;
+    height: 2rem;
+    border-color: transparent;
+    background: transparent;
+    padding: 0;
+    color: #8d98a6;
+  }
+
+  .ribbon-button:hover,
+  .ribbon-button:focus,
+  .ribbon-button.active {
+    border-color: #2ea987;
+    background: #10211e;
+    color: #e6edf3;
+  }
+
+  .ribbon-button:disabled {
+    cursor: default;
+    opacity: 0.42;
   }
 
   .panel-resize-handle {
@@ -609,6 +839,28 @@
     border-left-color: #2ea987;
     border-right-color: #2ea987;
     outline: none;
+  }
+
+  .panel-resize-handle:disabled {
+    cursor: default;
+    opacity: 0.55;
+  }
+
+  .panel-resize-handle:disabled:hover,
+  .panel-resize-handle:disabled:focus {
+    border-left-color: transparent;
+    border-right-color: #232b36;
+  }
+
+  .right-resize-handle {
+    border-right: 1px solid transparent;
+    border-left: 1px solid #232b36;
+  }
+
+  .right-resize-handle:disabled:hover,
+  .right-resize-handle:disabled:focus {
+    border-right-color: transparent;
+    border-left-color: #232b36;
   }
 
   :global(body.is-resizing-panel),
@@ -699,7 +951,7 @@
 
   .workspace-row {
     display: grid;
-    grid-template-columns: minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr) auto auto;
     gap: 0.38rem;
   }
 
@@ -738,32 +990,99 @@
     gap: 0.5rem;
   }
 
-  .settings-panel {
+  .settings-view {
     display: grid;
-    gap: 0.45rem;
-    border: 1px solid #232b36;
-    border-radius: 6px;
-    background: #0f141b;
-    padding: 0.58rem;
+    grid-template-rows: auto minmax(0, 1fr);
+    gap: 1rem;
+    min-height: 0;
+    color: #d7dde4;
   }
 
-  .settings-heading {
+  .settings-view-header {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: start;
+    gap: 0.72rem;
+  }
+
+  .settings-view-header h2 {
+    margin: 0;
+    color: #f0f4f8;
+    font-size: 1.16rem;
+    line-height: 1.2;
+  }
+
+  .settings-view-header p,
+  .settings-section p {
+    margin: 0.14rem 0 0;
+    color: #7d8896;
+    font-size: 0.75rem;
+  }
+
+  .settings-view-content {
+    display: grid;
+    align-content: start;
+    gap: 1rem;
+    overflow: auto;
+    min-height: 0;
+    max-width: 58rem;
+  }
+
+  .settings-section {
+    display: grid;
+    gap: 0.7rem;
+    border-top: 1px solid #232b36;
+    padding-top: 0.72rem;
+  }
+
+  .settings-section-heading {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: 0.5rem;
+    gap: 0.42rem;
+    color: #aeb8c4;
   }
 
-  .settings-heading h2 {
+  .settings-section-heading h3 {
     margin: 0;
     color: #e6edf3;
-    font-size: 0.82rem;
+    font-size: 0.88rem;
   }
 
-  .settings-panel label {
+  .settings-section label,
+  .setting-row span {
     color: #9aa6b2;
-    font-size: 0.72rem;
+    font-size: 0.75rem;
     font-weight: 650;
+  }
+
+  .setting-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 1rem;
+    min-height: 2.35rem;
+  }
+
+  .segmented-control {
+    display: inline-grid;
+    grid-template-columns: repeat(2, auto);
+    gap: 0.16rem;
+    border: 1px solid #232b36;
+    border-radius: 5px;
+    background: #0b0f14;
+    padding: 0.12rem;
+  }
+
+  .segmented-control button {
+    border-color: transparent;
+    padding: 0.18rem 0.48rem;
+    font-size: 0.72rem;
+  }
+
+  .segmented-control button.active {
+    border-color: #2ea987;
+    background: #10211e;
+    color: #e6edf3;
   }
 
   .settings-note {
@@ -859,6 +1178,12 @@
     line-height: 1.2;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .save-button {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.34rem;
   }
 
   .mode-group {

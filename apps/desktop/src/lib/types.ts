@@ -6,6 +6,19 @@ export type WorkspaceSummary = {
 export type AppSettings = {
   portable_root: string;
   last_workspace_path: string | null;
+  left_panel_width: number;
+  right_panel_width: number;
+  left_panel_mode: PanelMode;
+  right_panel_mode: PanelMode;
+};
+
+export type PanelMode = 'view' | 'ribbon';
+
+export type UpdateAppSettingsInput = {
+  left_panel_width: number;
+  right_panel_width: number;
+  left_panel_mode: PanelMode;
+  right_panel_mode: PanelMode;
 };
 
 export type NoteSummary = {

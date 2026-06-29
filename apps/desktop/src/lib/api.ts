@@ -7,11 +7,16 @@ import type {
   NoteSummary,
   SaveNoteInput,
   SaveNoteSourceInput,
+  UpdateAppSettingsInput,
   WorkspaceSummary
 } from './types';
 
 export function getAppSettings(): Promise<AppSettings> {
   return invoke('get_app_settings');
+}
+
+export function updateAppSettings(input: UpdateAppSettingsInput): Promise<AppSettings> {
+  return invoke('update_app_settings', { input });
 }
 
 export function openWorkspace(path: string): Promise<WorkspaceSummary> {

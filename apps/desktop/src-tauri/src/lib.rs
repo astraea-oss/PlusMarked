@@ -17,15 +17,47 @@ struct AppState {
     settings_path: PathBuf,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct AppSettings {
     last_workspace_path: Option<String>,
+    #[serde(default = "default_left_panel_width")]
+    left_panel_width: u16,
+    #[serde(default = "default_right_panel_width")]
+    right_panel_width: u16,
+    #[serde(default = "default_panel_mode")]
+    left_panel_mode: String,
+    #[serde(default = "default_panel_mode")]
+    right_panel_mode: String,
+}
+
+impl Default for AppSettings {
+    fn default() -> Self {
+        Self {
+            last_workspace_path: None,
+            left_panel_width: default_left_panel_width(),
+            right_panel_width: default_right_panel_width(),
+            left_panel_mode: default_panel_mode(),
+            right_panel_mode: default_panel_mode(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
 struct AppSettingsSummary {
     portable_root: String,
     last_workspace_path: Option<String>,
+    left_panel_width: u16,
+    right_panel_width: u16,
+    left_panel_mode: String,
+    right_panel_mode: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct UpdateAppSettingsInput {
+    left_panel_width: u16,
+    right_panel_width: u16,
+    left_panel_mode: String,
+    right_panel_mode: String,
 }
 
 impl AppState {
@@ -62,7 +94,28 @@ fn get_app_settings(state: State<'_, AppState>) -> Result<AppSettingsSummary, St
     Ok(AppSettingsSummary {
         portable_root: state.portable_root.to_string_lossy().to_string(),
         last_workspace_path: settings.last_workspace_path,
+        left_panel_width: settings.left_panel_width,
+        right_panel_width: settings.right_panel_width,
+        left_panel_mode: settings.left_panel_mode,
+        right_panel_mode: settings.right_panel_mode,
     })
+}
+
+#[tauri::command]
+fn update_app_settings(
+    input: UpdateAppSettingsInput,
+    state: State<'_, AppState>,
+) -> Result<AppSettingsSummary, String> {
+    {
+        let mut settings = state.settings.lock().map_err(lock_error)?;
+        settings.left_panel_width = input.left_panel_width.clamp(220, 420);
+        settings.right_panel_width = input.right_panel_width.clamp(210, 420);
+        settings.left_panel_mode = normalize_panel_mode(&input.left_panel_mode).to_string();
+        settings.right_panel_mode = normalize_panel_mode(&input.right_panel_mode).to_string();
+    }
+
+    state.save_settings()?;
+    get_app_settings(state)
 }
 
 #[tauri::command]
@@ -132,6 +185,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             get_app_settings,
+            update_app_settings,
             open_workspace,
             create_note,
             list_notes,
@@ -150,6 +204,25 @@ fn to_command_error(error: anyhow::Error) -> String {
 
 fn lock_error<T>(error: std::sync::PoisonError<T>) -> String {
     format!("application state lock failed: {error}")
+}
+
+fn default_left_panel_width() -> u16 {
+    285
+}
+
+fn default_right_panel_width() -> u16 {
+    255
+}
+
+fn default_panel_mode() -> String {
+    "view".to_string()
+}
+
+fn normalize_panel_mode(mode: &str) -> &str {
+    match mode {
+        "ribbon" => "ribbon",
+        _ => "view",
+    }
 }
 
 fn configure_portable_environment() -> PathBuf {
