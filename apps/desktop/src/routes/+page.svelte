@@ -1349,8 +1349,7 @@
   }
 
   .panel-tool-row.has-compact-action {
-    grid-template-columns: auto auto;
-    justify-content: start;
+    grid-template-columns: minmax(0, 1fr) auto;
   }
 
   .panel-tool-button {
@@ -1408,6 +1407,7 @@
   .notes-hud {
     grid-template-rows: minmax(0, 1fr) auto;
     gap: 0.22rem;
+    padding-left: 0;
   }
 
   .outline-hud {
