@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import DOMPurify from 'dompurify';
   import { marked } from 'marked';
+  import MarkdownPlusEditor from '$lib/MarkdownPlusEditor.svelte';
   import {
     createNote,
     getAppSettings,
@@ -407,13 +408,13 @@
               <button class="add-property-button" on:click={addProperty}>Add property</button>
             </section>
 
-            <textarea
-              class="body-editor live-body-editor"
-              value={liveBody}
-              aria-label="MarkdownPlus body"
-              on:input={(event) => updateLiveBody(event.currentTarget.value)}
-              on:keydown={(event) => handleEditorKeydown(event, 'body')}
-            ></textarea>
+            <div class="live-body-editor">
+              <MarkdownPlusEditor
+                value={liveBody}
+                ariaLabel="MarkdownPlus body"
+                onChange={updateLiveBody}
+              />
+            </div>
           </div>
         {:else}
           <div
@@ -811,7 +812,11 @@
     font-size: 0.88rem;
   }
 
-  .body-editor.live-body-editor,
+  .live-body-editor {
+    min-height: 0;
+    height: 100%;
+  }
+
   .body-shell.source-only .body-editor {
     border-color: transparent;
     border-radius: 0;
@@ -820,7 +825,6 @@
     box-shadow: none;
   }
 
-  .body-editor.live-body-editor:focus,
   .body-shell.source-only .body-editor:focus {
     border-color: transparent;
     box-shadow: none;
