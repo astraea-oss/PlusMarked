@@ -1,4 +1,6 @@
 <script lang="ts">
+  import DOMPurify from 'dompurify';
+  import { marked } from 'marked';
   import {
     createNote,
     getNote,
@@ -9,6 +11,8 @@
   } from '$lib/api';
   import type { NoteDocument, NoteSummary, WorkspaceSummary } from '$lib/types';
 
+  type EditorMode = 'write' | 'split' | 'preview';
+
   let workspacePath = '';
   let workspace: WorkspaceSummary | null = null;
   let notes: NoteSummary[] = [];
@@ -17,10 +21,14 @@
   let saving = false;
   let browsing = false;
   let settingsOpen = false;
+  let editorMode: EditorMode = 'split';
 
   $: selectedId = selectedNote?.frontmatter.id;
   $: tagText = selectedNote?.frontmatter.tags?.join(', ') ?? '';
   $: aliasText = selectedNote?.frontmatter.aliases?.join(', ') ?? '';
+  $: markdownHtml = DOMPurify.sanitize(
+    marked.parse(selectedNote?.body ?? '', { async: false }) as string
+  );
 
   async function openCurrentWorkspace() {
     if (!workspacePath.trim()) {
@@ -193,7 +201,43 @@
         </label>
       </div>
 
-      <textarea class="body-editor" bind:value={selectedNote.body} aria-label="Markdown body"></textarea>
+      <div class="editor-toolbar">
+        <div class="mode-group" aria-label="Editor mode">
+          <button
+            class:active={editorMode === 'write'}
+            class="mode-button"
+            on:click={() => (editorMode = 'write')}
+          >
+            Write
+          </button>
+          <button
+            class:active={editorMode === 'split'}
+            class="mode-button"
+            on:click={() => (editorMode = 'split')}
+          >
+            Split
+          </button>
+          <button
+            class:active={editorMode === 'preview'}
+            class="mode-button"
+            on:click={() => (editorMode = 'preview')}
+          >
+            Preview
+          </button>
+        </div>
+      </div>
+
+      <div class:preview-only={editorMode === 'preview'} class:write-only={editorMode === 'write'} class="body-shell">
+        {#if editorMode !== 'preview'}
+          <textarea class="body-editor" bind:value={selectedNote.body} aria-label="Markdown body"></textarea>
+        {/if}
+
+        {#if editorMode !== 'write'}
+          <article class="markdown-preview">
+            {@html markdownHtml}
+          </article>
+        {/if}
+      </div>
     {:else}
       <div class="empty-state" data-tauri-drag-region>
         <h2>Open a workspace</h2>
@@ -361,8 +405,8 @@
 
   .editor {
     display: grid;
-    grid-template-rows: auto auto minmax(0, 1fr) auto;
-    gap: 0.72rem;
+    grid-template-rows: auto auto auto minmax(0, 1fr) auto;
+    gap: 0.55rem;
     padding: 0.72rem;
     min-width: 0;
     min-height: 0;
@@ -401,6 +445,46 @@
     font-weight: 650;
   }
 
+  .editor-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+  }
+
+  .mode-group {
+    display: inline-grid;
+    grid-template-columns: repeat(3, auto);
+    gap: 0.22rem;
+    border: 1px solid #232b36;
+    border-radius: 6px;
+    background: #0b0f14;
+    padding: 0.18rem;
+  }
+
+  .mode-button {
+    border-color: transparent;
+    padding: 0.24rem 0.48rem;
+    font-size: 0.76rem;
+  }
+
+  .mode-button.active {
+    border-color: #2ea987;
+    background: #10211e;
+    color: #e6edf3;
+  }
+
+  .body-shell {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 0.55rem;
+    min-height: 0;
+  }
+
+  .body-shell.write-only,
+  .body-shell.preview-only {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .body-editor {
     min-height: 0;
     height: 100%;
@@ -409,6 +493,87 @@
     background: #0b0f14;
     font-family:
       "SFMono-Regular", Consolas, "Liberation Mono", Menlo, ui-monospace, monospace;
+  }
+
+  .markdown-preview {
+    min-height: 0;
+    overflow: auto;
+    border: 1px solid #232b36;
+    border-radius: 5px;
+    background: #0b0f14;
+    padding: 0.65rem 0.72rem;
+    color: #d7dde4;
+    line-height: 1.5;
+  }
+
+  .markdown-preview :global(*) {
+    max-width: 100%;
+  }
+
+  .markdown-preview :global(h1),
+  .markdown-preview :global(h2),
+  .markdown-preview :global(h3) {
+    margin: 0.2rem 0 0.55rem;
+    color: #f0f4f8;
+    line-height: 1.2;
+  }
+
+  .markdown-preview :global(h1) {
+    font-size: 1.28rem;
+  }
+
+  .markdown-preview :global(h2) {
+    font-size: 1.05rem;
+  }
+
+  .markdown-preview :global(h3) {
+    font-size: 0.95rem;
+  }
+
+  .markdown-preview :global(p),
+  .markdown-preview :global(ul),
+  .markdown-preview :global(ol),
+  .markdown-preview :global(blockquote),
+  .markdown-preview :global(pre) {
+    margin: 0 0 0.7rem;
+  }
+
+  .markdown-preview :global(strong) {
+    color: #f0f4f8;
+    font-weight: 750;
+  }
+
+  .markdown-preview :global(em) {
+    color: #b9c7d5;
+  }
+
+  .markdown-preview :global(code) {
+    border: 1px solid #303946;
+    border-radius: 4px;
+    background: #111820;
+    padding: 0.08rem 0.28rem;
+    color: #8bd5bd;
+    font-family:
+      "SFMono-Regular", Consolas, "Liberation Mono", Menlo, ui-monospace, monospace;
+    font-size: 0.88em;
+  }
+
+  .markdown-preview :global(pre) {
+    overflow: auto;
+    border: 1px solid #303946;
+    border-radius: 5px;
+    background: #111820;
+    padding: 0.65rem;
+  }
+
+  .markdown-preview :global(pre code) {
+    border: 0;
+    background: transparent;
+    padding: 0;
+  }
+
+  .markdown-preview :global(a) {
+    color: #4fbda0;
   }
 
   .empty-state {

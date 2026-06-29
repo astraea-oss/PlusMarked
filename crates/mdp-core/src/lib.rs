@@ -53,11 +53,7 @@ pub fn parse_document(input: &str) -> Result<NoteDocument> {
 
     let yaml = &body_start[..delimiter];
     let after_delimiter = &body_start[delimiter + "\n---".len()..];
-    let body = after_delimiter
-        .strip_prefix("\r\n")
-        .or_else(|| after_delimiter.strip_prefix('\n'))
-        .unwrap_or(after_delimiter)
-        .to_string();
+    let body = strip_frontmatter_body_gap(after_delimiter).to_string();
 
     let frontmatter = noyalib::from_str::<NoteFrontmatter>(yaml)
         .map_err(|error| MarkdownPlusError::InvalidYaml(error.to_string()))?;
@@ -70,7 +66,11 @@ pub fn serialize_document(document: &NoteDocument) -> Result<String> {
         .map_err(|error| MarkdownPlusError::SerializeYaml(error.to_string()))?;
     let yaml = yaml.trim_end();
 
-    Ok(format!("---\n{yaml}\n---\n\n{}", document.body))
+    if document.body.is_empty() {
+        Ok(format!("---\n{yaml}\n---\n"))
+    } else {
+        Ok(format!("---\n{yaml}\n---\n{}", document.body))
+    }
 }
 
 pub fn new_note(title: String, note_type: Option<String>) -> NoteDocument {
@@ -111,6 +111,10 @@ fn default_note_type() -> String {
     "note".to_string()
 }
 
+fn strip_frontmatter_body_gap(input: &str) -> &str {
+    input.trim_start_matches(['\r', '\n'])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -134,7 +138,24 @@ Body text
 
         assert_eq!(document.frontmatter.title, "Example");
         assert_eq!(document.frontmatter.tags, vec!["project"]);
-        assert_eq!(document.body.trim(), "Body text");
+        assert_eq!(document.body, "Body text\n");
+    }
+
+    #[test]
+    fn serialize_then_parse_does_not_add_leading_blank_lines() {
+        let document = new_note("Example".to_string(), None);
+        let document = update_note(
+            document,
+            "Example".to_string(),
+            "note".to_string(),
+            Vec::new(),
+            Vec::new(),
+            "# Heading\n\nBody".to_string(),
+        );
+
+        let serialized = serialize_document(&document).unwrap();
+        let parsed = parse_document(&serialized).unwrap();
+
+        assert_eq!(parsed.body, "# Heading\n\nBody");
     }
 }
-
