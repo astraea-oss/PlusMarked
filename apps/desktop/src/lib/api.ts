@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
+import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import type { NoteDocument, NoteSummary, SaveNoteInput, WorkspaceSummary } from './types';
 
 export function openWorkspace(path: string): Promise<WorkspaceSummary> {
@@ -21,3 +22,17 @@ export function saveNote(input: SaveNoteInput): Promise<{ note: NoteSummary }> {
   return invoke('save_note', { input });
 }
 
+export async function selectWorkspaceDirectory(defaultPath?: string): Promise<string | null> {
+  const selected = await openDialog({
+    title: 'Select MarkdownPlus workspace',
+    directory: true,
+    multiple: false,
+    defaultPath: defaultPath || undefined
+  });
+
+  if (Array.isArray(selected)) {
+    return selected[0] ?? null;
+  }
+
+  return selected;
+}

@@ -53,6 +53,7 @@ fn save_note(input: SaveNoteInput, state: State<'_, AppState>) -> Result<SaveRes
 pub fn run() {
     tauri::Builder::default()
         .manage(AppState::default())
+        .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             open_workspace,
             create_note,

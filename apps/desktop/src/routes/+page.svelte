@@ -1,5 +1,12 @@
 <script lang="ts">
-  import { createNote, getNote, listNotes, openWorkspace, saveNote } from '$lib/api';
+  import {
+    createNote,
+    getNote,
+    listNotes,
+    openWorkspace,
+    saveNote,
+    selectWorkspaceDirectory
+  } from '$lib/api';
   import type { NoteDocument, NoteSummary, WorkspaceSummary } from '$lib/types';
 
   let workspacePath = '';
@@ -8,6 +15,7 @@
   let selectedNote: NoteDocument | null = null;
   let status = 'Choose or type a workspace path to begin.';
   let saving = false;
+  let browsing = false;
 
   $: selectedId = selectedNote?.frontmatter.id;
   $: tagText = selectedNote?.frontmatter.tags?.join(', ') ?? '';
@@ -19,7 +27,25 @@
       return;
     }
 
-    workspace = await openWorkspace(workspacePath.trim());
+    await openWorkspacePath(workspacePath.trim());
+  }
+
+  async function browseWorkspace() {
+    browsing = true;
+    const selected = await selectWorkspaceDirectory(workspacePath.trim());
+    browsing = false;
+
+    if (!selected) {
+      status = 'Workspace selection cancelled.';
+      return;
+    }
+
+    workspacePath = selected;
+    await openWorkspacePath(selected);
+  }
+
+  async function openWorkspacePath(path: string) {
+    workspace = await openWorkspace(path);
     notes = await listNotes();
     selectedNote = null;
     status = `Opened ${workspace.root}`;
@@ -84,6 +110,9 @@
           bind:value={workspacePath}
           placeholder="/home/lua/MarkdownPlus Workspace"
         />
+        <button on:click={browseWorkspace} disabled={browsing}>
+          {browsing ? '...' : 'Browse'}
+        </button>
         <button class="primary" on:click={openCurrentWorkspace}>Open</button>
       </div>
     </section>
@@ -203,7 +232,7 @@
 
   .workspace-row {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-columns: minmax(0, 1fr) auto auto;
     gap: 0.38rem;
   }
 
