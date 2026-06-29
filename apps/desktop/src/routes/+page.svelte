@@ -24,9 +24,15 @@
     selectWorkspaceDirectory,
     updateAppSettings
   } from '$lib/api';
-  import type { NoteSource, NoteSummary, PanelMode, WorkspaceSummary } from '$lib/types';
+  import type { DockSide, NoteSource, NoteSummary, PanelMode, WorkspaceSummary } from '$lib/types';
 
   type EditorMode = 'live' | 'source' | 'split' | 'preview';
+  type RibbonToolId = 'notes' | 'new-note' | 'settings' | 'outline' | 'panel-layout';
+  type RibbonTool = {
+    id: RibbonToolId;
+    label: string;
+    dock: DockSide;
+  };
   type PropertyRow = {
     key: string;
     value: string;
@@ -46,6 +52,11 @@
   let rightPanelWidth = 255;
   let leftPanelMode: PanelMode = 'view';
   let rightPanelMode: PanelMode = 'view';
+  let notesDock: DockSide = 'left';
+  let newNoteDock: DockSide = 'left';
+  let settingsDock: DockSide = 'left';
+  let outlineDock: DockSide = 'right';
+  let panelLayoutDock: DockSide = 'right';
   let workspacePath = '';
   let workspace: WorkspaceSummary | null = null;
   let notes: NoteSummary[] = [];
@@ -64,6 +75,9 @@
   $: selectedTitle = notes.find((note) => note.id === selectedId)?.title ?? 'Untitled';
   $: leftPanelColumnWidth = leftPanelMode === 'ribbon' ? ribbonPanelWidth : leftPanelWidth;
   $: rightPanelColumnWidth = rightPanelMode === 'ribbon' ? ribbonPanelWidth : rightPanelWidth;
+  $: ribbonTools = buildRibbonTools();
+  $: leftRibbonTools = ribbonTools.filter((tool) => tool.dock === 'left');
+  $: rightRibbonTools = ribbonTools.filter((tool) => tool.dock === 'right');
   $: outlineItems = extractOutline(extractMarkdownBody(noteSource));
   $: markdownHtml = DOMPurify.sanitize(
     marked.parse(markdownPlusPreviewSource(extractMarkdownBody(noteSource)), {
@@ -79,6 +93,11 @@
     rightPanelWidth = clamp(settings.right_panel_width, minRightPanelWidth, maxRightPanelWidth);
     leftPanelMode = normalizePanelMode(settings.left_panel_mode);
     rightPanelMode = normalizePanelMode(settings.right_panel_mode);
+    notesDock = normalizeDockSide(settings.notes_dock);
+    newNoteDock = normalizeDockSide(settings.new_note_dock);
+    settingsDock = normalizeDockSide(settings.settings_dock);
+    outlineDock = normalizeDockSide(settings.outline_dock);
+    panelLayoutDock = normalizeDockSide(settings.panel_layout_dock);
 
     if (settings.last_workspace_path) {
       workspacePath = settings.last_workspace_path;
@@ -282,6 +301,20 @@
     return mode === 'ribbon' ? 'ribbon' : 'view';
   }
 
+  function normalizeDockSide(side: string): DockSide {
+    return side === 'right' ? 'right' : 'left';
+  }
+
+  function buildRibbonTools(): RibbonTool[] {
+    return [
+      { id: 'notes', label: 'Notes', dock: notesDock },
+      { id: 'new-note', label: 'New note', dock: newNoteDock },
+      { id: 'settings', label: 'Settings', dock: settingsDock },
+      { id: 'outline', label: 'Outline', dock: outlineDock },
+      { id: 'panel-layout', label: 'Panel layout', dock: panelLayoutDock }
+    ];
+  }
+
   async function setPanelMode(panel: 'left' | 'right', mode: PanelMode) {
     if (panel === 'left') {
       leftPanelMode = mode;
@@ -292,18 +325,100 @@
     await persistUiSettings();
   }
 
+  async function setToolDock(tool: RibbonToolId, side: DockSide) {
+    if (tool === 'notes') notesDock = side;
+    if (tool === 'new-note') newNoteDock = side;
+    if (tool === 'settings') settingsDock = side;
+    if (tool === 'outline') outlineDock = side;
+    if (tool === 'panel-layout') panelLayoutDock = side;
+
+    await persistUiSettings();
+  }
+
+  async function moveToolToOppositeDock(tool: RibbonToolId) {
+    const currentDock = getToolDock(tool);
+    await setToolDock(tool, currentDock === 'left' ? 'right' : 'left');
+  }
+
+  function getToolDock(tool: RibbonToolId): DockSide {
+    if (tool === 'notes') return notesDock;
+    if (tool === 'new-note') return newNoteDock;
+    if (tool === 'settings') return settingsDock;
+    if (tool === 'outline') return outlineDock;
+    return panelLayoutDock;
+  }
+
+  function handleRibbonDragStart(event: DragEvent, tool: RibbonToolId) {
+    event.dataTransfer?.setData('text/plain', tool);
+    event.dataTransfer?.setData('application/x-markdownplus-ribbon-tool', tool);
+    if (event.dataTransfer) {
+      event.dataTransfer.effectAllowed = 'move';
+    }
+  }
+
+  function allowRibbonDrop(event: DragEvent) {
+    event.preventDefault();
+    if (event.dataTransfer) {
+      event.dataTransfer.dropEffect = 'move';
+    }
+  }
+
+  async function handleRibbonDrop(event: DragEvent, side: DockSide) {
+    event.preventDefault();
+    const tool = event.dataTransfer?.getData('application/x-markdownplus-ribbon-tool')
+      || event.dataTransfer?.getData('text/plain');
+
+    if (isRibbonToolId(tool)) {
+      await setToolDock(tool, side);
+    }
+  }
+
+  function isRibbonToolId(value: string | undefined): value is RibbonToolId {
+    return value === 'notes'
+      || value === 'new-note'
+      || value === 'settings'
+      || value === 'outline'
+      || value === 'panel-layout';
+  }
+
+  function runRibbonTool(tool: RibbonToolId) {
+    if (tool === 'notes') {
+      settingsOpen = false;
+      return;
+    }
+
+    if (tool === 'new-note') {
+      createNewNote();
+      return;
+    }
+
+    if (tool === 'settings' || tool === 'panel-layout') {
+      settingsOpen = true;
+    }
+  }
+
   async function persistUiSettings() {
     try {
       const settings = await updateAppSettings({
         left_panel_width: Math.round(leftPanelWidth),
         right_panel_width: Math.round(rightPanelWidth),
         left_panel_mode: leftPanelMode,
-        right_panel_mode: rightPanelMode
+        right_panel_mode: rightPanelMode,
+        notes_dock: notesDock,
+        new_note_dock: newNoteDock,
+        settings_dock: settingsDock,
+        outline_dock: outlineDock,
+        panel_layout_dock: panelLayoutDock
       });
       leftPanelWidth = clamp(settings.left_panel_width, minLeftPanelWidth, maxLeftPanelWidth);
       rightPanelWidth = clamp(settings.right_panel_width, minRightPanelWidth, maxRightPanelWidth);
       leftPanelMode = normalizePanelMode(settings.left_panel_mode);
       rightPanelMode = normalizePanelMode(settings.right_panel_mode);
+      notesDock = normalizeDockSide(settings.notes_dock);
+      newNoteDock = normalizeDockSide(settings.new_note_dock);
+      settingsDock = normalizeDockSide(settings.settings_dock);
+      outlineDock = normalizeDockSide(settings.outline_dock);
+      panelLayoutDock = normalizeDockSide(settings.panel_layout_dock);
     } catch (error) {
       status = error instanceof Error ? error.message : String(error);
     }
@@ -465,24 +580,46 @@
   class="app-shell"
   style={`--left-panel-width: ${leftPanelColumnWidth}px; --right-panel-width: ${rightPanelColumnWidth}px;`}
 >
-  <aside class:ribbon-panel={leftPanelMode === 'ribbon'} class="sidebar">
+  <aside
+    class:ribbon-panel={leftPanelMode === 'ribbon'}
+    class="sidebar"
+    on:dragover={allowRibbonDrop}
+    on:drop={(event) => handleRibbonDrop(event, 'left')}
+  >
     {#if leftPanelMode === 'ribbon'}
-      <nav class="panel-ribbon" aria-label="Primary navigation" data-tauri-drag-region>
-        <button class="ribbon-button" aria-label="Notes" title="Notes" on:click={() => (settingsOpen = false)}>
-          <FileText size={17} />
-        </button>
-        <button class="ribbon-button" aria-label="New note" title="New note" on:click={createNewNote} disabled={!workspace}>
-          <Plus size={17} />
-        </button>
-        <button
-          class:active={settingsOpen}
-          class="ribbon-button"
-          aria-label="Settings"
-          title="Settings"
-          on:click={() => (settingsOpen = !settingsOpen)}
-        >
-          <Settings size={17} />
-        </button>
+      <nav
+        class="panel-ribbon"
+        aria-label="Left ribbon"
+        data-tauri-drag-region
+        on:dragover={allowRibbonDrop}
+        on:drop={(event) => handleRibbonDrop(event, 'left')}
+      >
+        {#each leftRibbonTools as tool}
+          <button
+            class:active={(tool.id === 'settings' || tool.id === 'panel-layout') && settingsOpen}
+            class:drag-enabled={rightPanelMode === 'ribbon'}
+            class="ribbon-button"
+            aria-label={tool.label}
+            title={`${tool.label} - drag to move`}
+            draggable="true"
+            on:click={() => runRibbonTool(tool.id)}
+            on:dblclick={() => moveToolToOppositeDock(tool.id)}
+            on:dragstart={(event) => handleRibbonDragStart(event, tool.id)}
+            disabled={tool.id === 'new-note' && !workspace}
+          >
+            {#if tool.id === 'notes'}
+              <FileText size={17} />
+            {:else if tool.id === 'new-note'}
+              <Plus size={17} />
+            {:else if tool.id === 'settings'}
+              <Settings size={17} />
+            {:else if tool.id === 'outline'}
+              <ListTree size={17} />
+            {:else}
+              <LayoutPanelLeft size={17} />
+            {/if}
+          </button>
+        {/each}
       </nav>
     {:else}
       <div class="brand" data-tauri-drag-region>
@@ -602,6 +739,22 @@
                 <button class:active={rightPanelMode === 'view'} on:click={() => setPanelMode('right', 'view')}>View</button>
                 <button class:active={rightPanelMode === 'ribbon'} on:click={() => setPanelMode('right', 'ribbon')}>Ribbon</button>
               </div>
+            </div>
+
+            <div class="settings-subsection">
+              <h4>Ribbon tools</h4>
+              {#each ribbonTools as tool}
+                <div class="setting-row">
+                  <div>
+                    <span>{tool.label}</span>
+                    <p>{tool.dock === 'left' ? 'Left ribbon' : 'Right ribbon'}</p>
+                  </div>
+                  <div class="segmented-control" aria-label={`${tool.label} dock`}>
+                    <button class:active={tool.dock === 'left'} on:click={() => setToolDock(tool.id, 'left')}>Left</button>
+                    <button class:active={tool.dock === 'right'} on:click={() => setToolDock(tool.id, 'right')}>Right</button>
+                  </div>
+                </div>
+              {/each}
             </div>
           </section>
         </div>
@@ -730,15 +883,46 @@
     on:keydown={handleRightPanelResizeKeydown}
   ></button>
 
-  <aside class:ribbon-panel={rightPanelMode === 'ribbon'} class="right-panel">
+  <aside
+    class:ribbon-panel={rightPanelMode === 'ribbon'}
+    class="right-panel"
+    on:dragover={allowRibbonDrop}
+    on:drop={(event) => handleRibbonDrop(event, 'right')}
+  >
     {#if rightPanelMode === 'ribbon'}
-      <nav class="panel-ribbon" aria-label="Context panels" data-tauri-drag-region>
-        <button class="ribbon-button active" aria-label="Outline" title="Outline">
-          <ListTree size={17} />
-        </button>
-        <button class="ribbon-button" aria-label="Panel layout" title="Panel layout" on:click={() => (settingsOpen = true)}>
-          <LayoutPanelLeft size={17} />
-        </button>
+      <nav
+        class="panel-ribbon"
+        aria-label="Right ribbon"
+        data-tauri-drag-region
+        on:dragover={allowRibbonDrop}
+        on:drop={(event) => handleRibbonDrop(event, 'right')}
+      >
+        {#each rightRibbonTools as tool}
+          <button
+            class:active={(tool.id === 'settings' || tool.id === 'panel-layout') && settingsOpen}
+            class:drag-enabled={leftPanelMode === 'ribbon'}
+            class="ribbon-button"
+            aria-label={tool.label}
+            title={`${tool.label} - drag to move`}
+            draggable="true"
+            on:click={() => runRibbonTool(tool.id)}
+            on:dblclick={() => moveToolToOppositeDock(tool.id)}
+            on:dragstart={(event) => handleRibbonDragStart(event, tool.id)}
+            disabled={tool.id === 'new-note' && !workspace}
+          >
+            {#if tool.id === 'notes'}
+              <FileText size={17} />
+            {:else if tool.id === 'new-note'}
+              <Plus size={17} />
+            {:else if tool.id === 'settings'}
+              <Settings size={17} />
+            {:else if tool.id === 'outline'}
+              <ListTree size={17} />
+            {:else}
+              <LayoutPanelLeft size={17} />
+            {/if}
+          </button>
+        {/each}
       </nav>
     {:else}
       <div class="right-panel-toolbar" data-tauri-drag-region>
@@ -814,6 +998,14 @@
     border-color: #2ea987;
     background: #10211e;
     color: #e6edf3;
+  }
+
+  .ribbon-button.drag-enabled {
+    cursor: grab;
+  }
+
+  .ribbon-button.drag-enabled:active {
+    cursor: grabbing;
   }
 
   .ribbon-button:disabled {
@@ -1046,6 +1238,19 @@
     margin: 0;
     color: #e6edf3;
     font-size: 0.88rem;
+  }
+
+  .settings-subsection {
+    display: grid;
+    gap: 0.46rem;
+    border-top: 1px solid #1b222c;
+    padding-top: 0.62rem;
+  }
+
+  .settings-subsection h4 {
+    margin: 0;
+    color: #d7dde4;
+    font-size: 0.8rem;
   }
 
   .settings-section label,

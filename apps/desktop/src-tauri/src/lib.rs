@@ -28,6 +28,16 @@ struct AppSettings {
     left_panel_mode: String,
     #[serde(default = "default_panel_mode")]
     right_panel_mode: String,
+    #[serde(default = "default_left_dock")]
+    notes_dock: String,
+    #[serde(default = "default_left_dock")]
+    new_note_dock: String,
+    #[serde(default = "default_left_dock")]
+    settings_dock: String,
+    #[serde(default = "default_right_dock")]
+    outline_dock: String,
+    #[serde(default = "default_right_dock")]
+    panel_layout_dock: String,
 }
 
 impl Default for AppSettings {
@@ -38,6 +48,11 @@ impl Default for AppSettings {
             right_panel_width: default_right_panel_width(),
             left_panel_mode: default_panel_mode(),
             right_panel_mode: default_panel_mode(),
+            notes_dock: default_left_dock(),
+            new_note_dock: default_left_dock(),
+            settings_dock: default_left_dock(),
+            outline_dock: default_right_dock(),
+            panel_layout_dock: default_right_dock(),
         }
     }
 }
@@ -50,6 +65,11 @@ struct AppSettingsSummary {
     right_panel_width: u16,
     left_panel_mode: String,
     right_panel_mode: String,
+    notes_dock: String,
+    new_note_dock: String,
+    settings_dock: String,
+    outline_dock: String,
+    panel_layout_dock: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -58,6 +78,11 @@ struct UpdateAppSettingsInput {
     right_panel_width: u16,
     left_panel_mode: String,
     right_panel_mode: String,
+    notes_dock: String,
+    new_note_dock: String,
+    settings_dock: String,
+    outline_dock: String,
+    panel_layout_dock: String,
 }
 
 impl AppState {
@@ -98,6 +123,11 @@ fn get_app_settings(state: State<'_, AppState>) -> Result<AppSettingsSummary, St
         right_panel_width: settings.right_panel_width,
         left_panel_mode: settings.left_panel_mode,
         right_panel_mode: settings.right_panel_mode,
+        notes_dock: settings.notes_dock,
+        new_note_dock: settings.new_note_dock,
+        settings_dock: settings.settings_dock,
+        outline_dock: settings.outline_dock,
+        panel_layout_dock: settings.panel_layout_dock,
     })
 }
 
@@ -112,6 +142,11 @@ fn update_app_settings(
         settings.right_panel_width = input.right_panel_width.clamp(210, 420);
         settings.left_panel_mode = normalize_panel_mode(&input.left_panel_mode).to_string();
         settings.right_panel_mode = normalize_panel_mode(&input.right_panel_mode).to_string();
+        settings.notes_dock = normalize_dock_side(&input.notes_dock).to_string();
+        settings.new_note_dock = normalize_dock_side(&input.new_note_dock).to_string();
+        settings.settings_dock = normalize_dock_side(&input.settings_dock).to_string();
+        settings.outline_dock = normalize_dock_side(&input.outline_dock).to_string();
+        settings.panel_layout_dock = normalize_dock_side(&input.panel_layout_dock).to_string();
     }
 
     state.save_settings()?;
@@ -218,10 +253,25 @@ fn default_panel_mode() -> String {
     "view".to_string()
 }
 
+fn default_left_dock() -> String {
+    "left".to_string()
+}
+
+fn default_right_dock() -> String {
+    "right".to_string()
+}
+
 fn normalize_panel_mode(mode: &str) -> &str {
     match mode {
         "ribbon" => "ribbon",
         _ => "view",
+    }
+}
+
+fn normalize_dock_side(side: &str) -> &str {
+    match side {
+        "right" => "right",
+        _ => "left",
     }
 }
 

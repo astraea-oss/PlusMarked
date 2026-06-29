@@ -10,15 +10,26 @@ export type AppSettings = {
   right_panel_width: number;
   left_panel_mode: PanelMode;
   right_panel_mode: PanelMode;
+  notes_dock: DockSide;
+  new_note_dock: DockSide;
+  settings_dock: DockSide;
+  outline_dock: DockSide;
+  panel_layout_dock: DockSide;
 };
 
 export type PanelMode = 'view' | 'ribbon';
+export type DockSide = 'left' | 'right';
 
 export type UpdateAppSettingsInput = {
   left_panel_width: number;
   right_panel_width: number;
   left_panel_mode: PanelMode;
   right_panel_mode: PanelMode;
+  notes_dock: DockSide;
+  new_note_dock: DockSide;
+  settings_dock: DockSide;
+  outline_dock: DockSide;
+  panel_layout_dock: DockSide;
 };
 
 export type NoteSummary = {
