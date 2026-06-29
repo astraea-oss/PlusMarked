@@ -16,9 +16,11 @@ repository = "https://github.com/astraea-oss/MarkdownPlus"
 [workspace.dependencies]
 anyhow = "1"
 chrono = { version = "0.4", features = ["serde"] }
+dunce = "1"
 noyalib = "0.0.7"
 rusqlite = { version = "0.32", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+tempfile = "3"
 thiserror = "2"
 uuid = { version = "1", features = ["serde", "v7"] }

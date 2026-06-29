@@ -1,10 +1,11 @@
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use anyhow::{anyhow, Context, Result};
-use mdp_core::{new_note, parse_document, serialize_document, update_note, NoteDocument};
-pub use mdp_db::NoteSummary;
+use anyhow::{Context, Result, anyhow};
+use mdp_core::{NoteDocument, new_note, parse_document, serialize_document, update_note};
 use mdp_db::Database;
+pub use mdp_db::NoteSummary;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone)]
@@ -54,7 +55,7 @@ pub struct SaveResult {
 
 impl WorkspaceHandle {
     pub fn open(root: impl AsRef<Path>) -> Result<Self> {
-        let root = root.as_ref().to_path_buf();
+        let root = normalize_workspace_root(root.as_ref())?;
         fs::create_dir_all(root.join("notes")).context("creating notes directory")?;
         fs::create_dir_all(root.join("bases")).context("creating bases directory")?;
         fs::create_dir_all(root.join(".local")).context("creating local metadata directory")?;
@@ -196,10 +197,124 @@ fn write_document_atomic(path: &Path, document: &NoteDocument) -> Result<()> {
 }
 
 fn write_source_atomic(path: &Path, content: &str) -> Result<()> {
-    let temporary_path = path.with_extension("mdp.tmp");
-    fs::write(&temporary_path, content)
-        .with_context(|| format!("writing temporary note {}", temporary_path.to_string_lossy()))?;
-    fs::rename(&temporary_path, path)
+    let parent = path
+        .parent()
+        .ok_or_else(|| anyhow!("note path has no parent: {}", path.to_string_lossy()))?;
+    fs::create_dir_all(parent)
+        .with_context(|| format!("creating note directory {}", parent.to_string_lossy()))?;
+
+    let mut temporary_file = tempfile::Builder::new()
+        .prefix(".mdp-write-")
+        .suffix(".tmp")
+        .tempfile_in(parent)
+        .with_context(|| format!("creating temporary note in {}", parent.to_string_lossy()))?;
+
+    temporary_file
+        .write_all(content.as_bytes())
+        .with_context(|| format!("writing temporary note {}", path.to_string_lossy()))?;
+    temporary_file
+        .flush()
+        .with_context(|| format!("flushing temporary note {}", path.to_string_lossy()))?;
+    temporary_file
+        .persist(path)
+        .map_err(|error| error.error)
         .with_context(|| format!("moving note into place {}", path.to_string_lossy()))?;
     Ok(())
+}
+
+fn normalize_workspace_root(root: &Path) -> Result<PathBuf> {
+    fs::create_dir_all(root)
+        .with_context(|| format!("creating workspace root {}", root.to_string_lossy()))?;
+    dunce::canonicalize(root)
+        .with_context(|| format!("canonicalizing workspace root {}", root.to_string_lossy()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn opens_reindexes_workspace_with_spaces_and_unicode() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let root = temp
+            .path()
+            .join("Workspace With Spaces")
+            .join("Notes Ünicode");
+        let expected_root = dunce::canonicalize({
+            fs::create_dir_all(&root)?;
+            &root
+        })?;
+
+        let workspace = WorkspaceHandle::open(&root)?;
+        let summary = workspace.summary()?;
+
+        assert_eq!(summary.root, expected_root.to_string_lossy().to_string());
+        assert!(expected_root.join("notes").is_dir());
+        assert!(expected_root.join("bases").is_dir());
+        assert!(expected_root.join(".local").join("index.sqlite").is_file());
+
+        let note = workspace.create_note(CreateNoteInput {
+            title: Some("Portable Path Test".to_string()),
+            note_type: None,
+        })?;
+        assert_eq!(workspace.list_notes()?.len(), 1);
+        drop(workspace);
+
+        let reopened = WorkspaceHandle::open(&root)?;
+        let notes = reopened.list_notes()?;
+
+        assert_eq!(notes.len(), 1);
+        assert_eq!(notes[0].id, note.id);
+
+        Ok(())
+    }
+
+    #[test]
+    fn save_note_source_replaces_existing_file_and_cleans_temporary_files() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let workspace = WorkspaceHandle::open(temp.path().join("Replace Existing"))?;
+        let note = workspace.create_note(CreateNoteInput {
+            title: Some("Replace Test".to_string()),
+            note_type: None,
+        })?;
+
+        let original = workspace.get_note_source(&note.id)?;
+        let first_edit = format!(
+            "{}\n# First Heading\nBody one\n",
+            original.source.trim_end()
+        );
+        workspace.save_note_source(SaveNoteSourceInput {
+            id: note.id.clone(),
+            source: first_edit,
+        })?;
+
+        let saved = workspace.get_note_source(&note.id)?;
+        assert!(saved.source.contains("# First Heading\nBody one"));
+
+        let second_edit = saved.source.replace("Body one", "Body two");
+        workspace.save_note_source(SaveNoteSourceInput {
+            id: note.id.clone(),
+            source: second_edit,
+        })?;
+
+        let saved_again = workspace.get_note_source(&note.id)?;
+        assert!(saved_again.source.contains("Body two"));
+        assert_no_write_temporary_files(&workspace.root.join("notes"))?;
+
+        Ok(())
+    }
+
+    fn assert_no_write_temporary_files(notes_dir: &Path) -> Result<()> {
+        for entry in fs::read_dir(notes_dir)? {
+            let path = entry?.path();
+            assert_ne!(
+                path.extension().and_then(|extension| extension.to_str()),
+                Some("tmp"),
+                "temporary file was left behind: {}",
+                path.to_string_lossy()
+            );
+        }
+
+        Ok(())
+    }
 }

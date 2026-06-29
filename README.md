@@ -17,7 +17,9 @@ The current implementation is the first vertical slice:
 
 - Rust stable 1.85 or newer.
 - Node.js and npm.
-- Linux Tauri system dependencies for your distribution.
+- Tauri system dependencies for your platform.
+
+See [Building MarkdownPlus](docs/building.md) for Linux and Windows setup details.
 
 ## Run
 
@@ -53,8 +55,11 @@ MarkdownPlusData/
     config/
     data/
     cache/
+    temp/
 ```
 
 Set `MARKDOWNPLUS_PORTABLE_HOME` before launching the app to override that folder.
+
+On Linux, MarkdownPlus points XDG config/data/cache and temp directories at this portable runtime folder before Tauri starts. On Windows, it points `APPDATA`, `LOCALAPPDATA`, `TEMP`, and `TMP` at the same portable runtime folder.
 
 The selected workspace is user-owned and can live anywhere. Once selected, its path is cached in `MarkdownPlusData/settings/settings.json` and reopened automatically on the next launch.

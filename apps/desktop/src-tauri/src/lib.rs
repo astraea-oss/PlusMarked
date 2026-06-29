@@ -1,5 +1,5 @@
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use mdp_core::NoteDocument;
@@ -70,16 +70,17 @@ fn open_workspace(path: String, state: State<'_, AppState>) -> Result<WorkspaceS
     let workspace = WorkspaceHandle::open(path).map_err(to_command_error)?;
     let summary = workspace.summary().map_err(to_command_error)?;
     *state.workspace.lock().map_err(lock_error)? = Some(workspace);
-    state.settings.lock().map_err(lock_error)?.last_workspace_path = Some(summary.root.clone());
+    state
+        .settings
+        .lock()
+        .map_err(lock_error)?
+        .last_workspace_path = Some(summary.root.clone());
     state.save_settings()?;
     Ok(summary)
 }
 
 #[tauri::command]
-fn create_note(
-    input: CreateNoteInput,
-    state: State<'_, AppState>,
-) -> Result<NoteSummary, String> {
+fn create_note(input: CreateNoteInput, state: State<'_, AppState>) -> Result<NoteSummary, String> {
     let guard = state.workspace.lock().map_err(lock_error)?;
     let workspace = guard.as_ref().ok_or("open a workspace first")?;
     workspace.create_note(input).map_err(to_command_error)
@@ -156,24 +157,55 @@ fn configure_portable_environment() -> PathBuf {
         .map(PathBuf::from)
         .unwrap_or_else(default_portable_root);
 
+    let runtime_root = portable_root.join("runtime");
     let _ = fs::create_dir_all(portable_root.join("settings"));
-    let _ = fs::create_dir_all(portable_root.join("runtime").join("config"));
-    let _ = fs::create_dir_all(portable_root.join("runtime").join("data"));
-    let _ = fs::create_dir_all(portable_root.join("runtime").join("cache"));
+    let _ = fs::create_dir_all(runtime_root.join("config"));
+    let _ = fs::create_dir_all(runtime_root.join("data"));
+    let _ = fs::create_dir_all(runtime_root.join("cache"));
+    let _ = fs::create_dir_all(runtime_root.join("temp"));
 
-    // Keep framework/webview runtime data near the executable on Linux instead of
-    // the user's XDG app-data/cache locations. This must happen before Tauri
-    // initializes windows or plugins.
-    unsafe {
-        std::env::set_var(
-            "XDG_CONFIG_HOME",
-            portable_root.join("runtime").join("config"),
-        );
-        std::env::set_var("XDG_DATA_HOME", portable_root.join("runtime").join("data"));
-        std::env::set_var("XDG_CACHE_HOME", portable_root.join("runtime").join("cache"));
-    }
+    configure_platform_runtime_environment(&portable_root);
 
     portable_root
+}
+
+#[cfg(target_os = "linux")]
+fn configure_platform_runtime_environment(portable_root: &Path) {
+    let runtime_root = portable_root.join("runtime");
+
+    // Keep framework/webview runtime data near the executable instead of the
+    // user's XDG app-data/cache locations. This must happen before Tauri
+    // initializes windows or plugins.
+    unsafe {
+        std::env::set_var("XDG_CONFIG_HOME", runtime_root.join("config"));
+        std::env::set_var("XDG_DATA_HOME", runtime_root.join("data"));
+        std::env::set_var("XDG_CACHE_HOME", runtime_root.join("cache"));
+        std::env::set_var("TMPDIR", runtime_root.join("temp"));
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn configure_platform_runtime_environment(portable_root: &Path) {
+    let runtime_root = portable_root.join("runtime");
+
+    // Route framework/webview runtime data into the portable folder on Windows.
+    // WebView2 and common Windows crates use these variables as their app-data
+    // roots, so set them before Tauri initializes windows or plugins.
+    unsafe {
+        std::env::set_var("APPDATA", runtime_root.join("config"));
+        std::env::set_var("LOCALAPPDATA", runtime_root.join("data"));
+        std::env::set_var("TEMP", runtime_root.join("temp"));
+        std::env::set_var("TMP", runtime_root.join("temp"));
+    }
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
+fn configure_platform_runtime_environment(portable_root: &Path) {
+    let runtime_root = portable_root.join("runtime");
+
+    unsafe {
+        std::env::set_var("TMPDIR", runtime_root.join("temp"));
+    }
 }
 
 fn default_portable_root() -> PathBuf {

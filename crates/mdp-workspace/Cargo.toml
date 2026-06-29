@@ -7,8 +7,9 @@ repository.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+dunce.workspace = true
 mdp-core = { path = "../mdp-core" }
 mdp-db = { path = "../mdp-db" }
 serde.workspace = true
+tempfile.workspace = true
 uuid.workspace = true
-

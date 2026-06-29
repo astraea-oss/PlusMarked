@@ -7,12 +7,27 @@ on:
     branches: ["main"]
 
 jobs:
-  rust:
-    runs-on: ubuntu-latest
+  check:
+    name: Check (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+
     steps:
       - uses: actions/checkout@v4
+
       - uses: dtolnay/rust-toolchain@stable
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+
       - name: Install Tauri Linux dependencies
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -20,25 +35,21 @@ jobs:
             libappindicator3-dev \
             librsvg2-dev \
             patchelf
-      - name: Check Rust workspace
-        run: cargo check --workspace
-      - name: Test Rust workspace
-        run: cargo test --workspace
 
-  frontend:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
+      - name: Install frontend dependencies
+        run: npm ci
         working-directory: apps/desktop
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - name: Install dependencies
-        run: npm install
+
       - name: Check frontend
         run: npm run check
+        working-directory: apps/desktop
+
       - name: Build frontend
         run: npm run build
+        working-directory: apps/desktop
 
+      - name: Check Rust workspace
+        run: cargo check --workspace
+
+      - name: Test Rust workspace
+        run: cargo test --workspace
