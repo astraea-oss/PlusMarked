@@ -382,11 +382,7 @@
 
       {#if editorMode === 'live'}
         <div class="live-editor">
-          <section class="live-properties" aria-label="Properties">
-            <div class="live-properties-header">
-              <h3>Properties</h3>
-            </div>
-
+          <section class="live-properties" aria-label="Note properties">
             <div class="property-list">
               {#each propertyRows as property, index}
                 <div class="property-row">
@@ -400,7 +396,7 @@
                     value={property.value}
                     on:input={(event) => updateProperty(index, 'value', event.currentTarget.value)}
                   />
-                  <button class="icon-button" aria-label="Remove property" on:click={() => removeProperty(index)}>
+                  <button class="property-remove-button" aria-label="Remove property" on:click={() => removeProperty(index)}>
                     X
                   </button>
                 </div>
@@ -714,29 +710,14 @@
   .live-editor {
     display: grid;
     grid-template-rows: auto minmax(0, 1fr);
-    gap: 0.34rem;
+    gap: 0.18rem;
     min-height: 0;
   }
 
   .live-properties {
     display: grid;
-    gap: 0.24rem;
-    border-bottom: 1px solid #232b36;
-    padding-bottom: 0.32rem;
-  }
-
-  .live-properties-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.5rem;
-  }
-
-  .live-properties-header h3 {
-    margin: 0;
-    color: #c6d0dc;
-    font-size: 0.74rem;
-    font-weight: 650;
+    gap: 0.12rem;
+    padding: 0.1rem 0 0.25rem;
   }
 
   .property-list {
@@ -746,17 +727,18 @@
 
   .property-row {
     display: grid;
-    grid-template-columns: minmax(6rem, 0.35fr) minmax(0, 1fr) auto;
-    gap: 0.28rem;
+    grid-template-columns: minmax(5.5rem, 0.26fr) minmax(0, 1fr) 1.35rem;
+    gap: 0.22rem;
     align-items: center;
+    min-height: 1.34rem;
   }
 
   .property-row input {
     border-color: transparent;
     background: transparent;
-    min-height: 1.45rem;
-    padding: 0.1rem 0.22rem;
-    font-size: 0.82rem;
+    min-height: 1.26rem;
+    padding: 0.04rem 0.18rem;
+    font-size: 0.8rem;
   }
 
   .property-row input:first-child {
@@ -765,19 +747,52 @@
 
   .property-row input:focus {
     border-color: #303946;
-    background: #0b0f14;
+    background: #10161f;
   }
 
   .live-body-editor {
     border-color: transparent;
     background: transparent;
-    padding: 0;
+    padding: 0.18rem 0 0;
   }
 
   .add-property-button {
     justify-self: start;
-    padding: 0.18rem 0.4rem;
+    border-color: transparent;
+    background: transparent;
+    color: #8d98a6;
+    padding: 0.08rem 0.18rem;
     font-size: 0.72rem;
+  }
+
+  .add-property-button:hover {
+    border-color: #303946;
+    background: #10161f;
+    color: #d7dde4;
+  }
+
+  .property-remove-button {
+    display: grid;
+    place-items: center;
+    width: 1.28rem;
+    height: 1.28rem;
+    border-color: transparent;
+    background: transparent;
+    padding: 0;
+    color: #5f6b78;
+    font-size: 0.68rem;
+    opacity: 0;
+  }
+
+  .property-row:hover .property-remove-button,
+  .property-remove-button:focus {
+    opacity: 1;
+  }
+
+  .property-remove-button:hover {
+    border-color: #303946;
+    background: #10161f;
+    color: #d7dde4;
   }
 
   .body-editor {
