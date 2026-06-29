@@ -333,6 +333,7 @@
     if (tool === 'panel-layout') panelLayoutDock = side;
 
     await persistUiSettings();
+    status = `${toolLabel(tool)} moved to ${side} panel.`;
   }
 
   async function moveToolToOppositeDock(tool: RibbonToolId) {
@@ -346,6 +347,12 @@
     if (tool === 'settings') return settingsDock;
     if (tool === 'outline') return outlineDock;
     return panelLayoutDock;
+  }
+
+  function toolLabel(tool: RibbonToolId): string {
+    if (tool === 'new-note') return 'New note';
+    if (tool === 'panel-layout') return 'Panel layout';
+    return tool.charAt(0).toUpperCase() + tool.slice(1);
   }
 
   function handleRibbonDragStart(event: DragEvent, tool: RibbonToolId) {
@@ -388,6 +395,11 @@
     }
 
     if (tool === 'new-note') {
+      if (!workspace) {
+        status = 'Open a workspace first.';
+        return;
+      }
+
       createNewNote();
       return;
     }
@@ -590,22 +602,21 @@
       <nav
         class="panel-ribbon"
         aria-label="Left ribbon"
-        data-tauri-drag-region
         on:dragover={allowRibbonDrop}
         on:drop={(event) => handleRibbonDrop(event, 'left')}
       >
         {#each leftRibbonTools as tool}
           <button
             class:active={(tool.id === 'settings' || tool.id === 'panel-layout') && settingsOpen}
-            class:drag-enabled={rightPanelMode === 'ribbon'}
+            class:drag-enabled={true}
             class="ribbon-button"
             aria-label={tool.label}
+            aria-disabled={tool.id === 'new-note' && !workspace}
             title={`${tool.label} - drag to move`}
             draggable="true"
             on:click={() => runRibbonTool(tool.id)}
             on:dblclick={() => moveToolToOppositeDock(tool.id)}
             on:dragstart={(event) => handleRibbonDragStart(event, tool.id)}
-            disabled={tool.id === 'new-note' && !workspace}
           >
             {#if tool.id === 'notes'}
               <FileText size={17} />
@@ -629,7 +640,37 @@
         </div>
       </div>
 
-      {#if workspace}
+      <nav class="panel-tool-bar" aria-label="Left panel tools">
+        {#each leftRibbonTools as tool}
+          <button
+            class:active={(tool.id === 'settings' || tool.id === 'panel-layout') && settingsOpen}
+            class:drag-enabled={true}
+            class="panel-tool-button"
+            aria-label={tool.label}
+            aria-disabled={tool.id === 'new-note' && !workspace}
+            title={`${tool.label} - drag to move`}
+            draggable="true"
+            on:click={() => runRibbonTool(tool.id)}
+            on:dblclick={() => moveToolToOppositeDock(tool.id)}
+            on:dragstart={(event) => handleRibbonDragStart(event, tool.id)}
+          >
+            {#if tool.id === 'notes'}
+              <FileText size={15} />
+            {:else if tool.id === 'new-note'}
+              <Plus size={15} />
+            {:else if tool.id === 'settings'}
+              <Settings size={15} />
+            {:else if tool.id === 'outline'}
+              <ListTree size={15} />
+            {:else}
+              <LayoutPanelLeft size={15} />
+            {/if}
+            <span>{tool.label}</span>
+          </button>
+        {/each}
+      </nav>
+
+      {#if notesDock === 'left' && workspace}
         <section class="notes-header">
           <div>
             <span class="count">{notes.length}</span>
@@ -653,17 +694,41 @@
             </button>
           {/each}
         </nav>
-      {:else}
+      {/if}
+
+      {#if outlineDock === 'left'}
+        <div class="right-panel-toolbar">
+          <h2>Outline</h2>
+        </div>
+
+        {#if selectedNoteSource && outlineItems.length}
+          <nav class="outline-list" aria-label="Note outline">
+            {#each outlineItems as item}
+              <div class:level-two={item.level === 2} class:level-three={item.level === 3} class="outline-row">
+                {item.text}
+              </div>
+            {/each}
+          </nav>
+        {:else}
+          <div class="right-panel-empty">
+            No headings found.
+          </div>
+        {/if}
+      {/if}
+
+      {#if notesDock !== 'left' && outlineDock !== 'left'}
         <div class="sidebar-empty">
-          Open Settings to choose a workspace.
+          {workspace ? 'Drop tools here.' : 'Open Settings to choose a workspace.'}
         </div>
       {/if}
 
-      <div class="sidebar-footer">
-        <button class:active={settingsOpen} class="settings-button" on:click={() => (settingsOpen = !settingsOpen)}>
-          Settings
-        </button>
-      </div>
+      {#if settingsDock === 'left'}
+        <div class="sidebar-footer">
+          <button class:active={settingsOpen} class="settings-button" on:click={() => (settingsOpen = !settingsOpen)}>
+            Settings
+          </button>
+        </div>
+      {/if}
     {/if}
   </aside>
 
@@ -742,12 +807,12 @@
             </div>
 
             <div class="settings-subsection">
-              <h4>Ribbon tools</h4>
+              <h4>Panel tools</h4>
               {#each ribbonTools as tool}
                 <div class="setting-row">
                   <div>
                     <span>{tool.label}</span>
-                    <p>{tool.dock === 'left' ? 'Left ribbon' : 'Right ribbon'}</p>
+                    <p>{tool.dock === 'left' ? 'Left panel' : 'Right panel'}</p>
                   </div>
                   <div class="segmented-control" aria-label={`${tool.label} dock`}>
                     <button class:active={tool.dock === 'left'} on:click={() => setToolDock(tool.id, 'left')}>Left</button>
@@ -893,22 +958,21 @@
       <nav
         class="panel-ribbon"
         aria-label="Right ribbon"
-        data-tauri-drag-region
         on:dragover={allowRibbonDrop}
         on:drop={(event) => handleRibbonDrop(event, 'right')}
       >
         {#each rightRibbonTools as tool}
           <button
             class:active={(tool.id === 'settings' || tool.id === 'panel-layout') && settingsOpen}
-            class:drag-enabled={leftPanelMode === 'ribbon'}
+            class:drag-enabled={true}
             class="ribbon-button"
             aria-label={tool.label}
+            aria-disabled={tool.id === 'new-note' && !workspace}
             title={`${tool.label} - drag to move`}
             draggable="true"
             on:click={() => runRibbonTool(tool.id)}
             on:dblclick={() => moveToolToOppositeDock(tool.id)}
             on:dragstart={(event) => handleRibbonDragStart(event, tool.id)}
-            disabled={tool.id === 'new-note' && !workspace}
           >
             {#if tool.id === 'notes'}
               <FileText size={17} />
@@ -925,21 +989,83 @@
         {/each}
       </nav>
     {:else}
-      <div class="right-panel-toolbar" data-tauri-drag-region>
-        <h2>Outline</h2>
-      </div>
+      <nav class="panel-tool-bar" aria-label="Right panel tools">
+        {#each rightRibbonTools as tool}
+          <button
+            class:active={(tool.id === 'settings' || tool.id === 'panel-layout') && settingsOpen}
+            class:drag-enabled={true}
+            class="panel-tool-button"
+            aria-label={tool.label}
+            aria-disabled={tool.id === 'new-note' && !workspace}
+            title={`${tool.label} - drag to move`}
+            draggable="true"
+            on:click={() => runRibbonTool(tool.id)}
+            on:dblclick={() => moveToolToOppositeDock(tool.id)}
+            on:dragstart={(event) => handleRibbonDragStart(event, tool.id)}
+          >
+            {#if tool.id === 'notes'}
+              <FileText size={15} />
+            {:else if tool.id === 'new-note'}
+              <Plus size={15} />
+            {:else if tool.id === 'settings'}
+              <Settings size={15} />
+            {:else if tool.id === 'outline'}
+              <ListTree size={15} />
+            {:else}
+              <LayoutPanelLeft size={15} />
+            {/if}
+            <span>{tool.label}</span>
+          </button>
+        {/each}
+      </nav>
 
-      {#if selectedNoteSource && outlineItems.length}
-        <nav class="outline-list" aria-label="Note outline">
-          {#each outlineItems as item}
-            <div class:level-two={item.level === 2} class:level-three={item.level === 3} class="outline-row">
-              {item.text}
-            </div>
+      {#if notesDock === 'right' && workspace}
+        <section class="notes-header">
+          <div>
+            <span class="count">{notes.length}</span>
+            <span>notes</span>
+          </div>
+          <button on:click={createNewNote}>New</button>
+        </section>
+
+        <nav class="notes-list" aria-label="Notes">
+          {#each notes as note}
+            <button
+              class:active={note.id === selectedId}
+              class="note-row"
+              on:click={() => {
+                settingsOpen = false;
+                selectNote(note.id);
+              }}
+            >
+              <span class="note-title">{note.title}</span>
+              <span class="note-meta">{note.note_type} · {new Date(note.updated_at).toLocaleString()}</span>
+            </button>
           {/each}
         </nav>
-      {:else}
+      {/if}
+
+      {#if outlineDock === 'right'}
+        <div class="right-panel-toolbar" data-tauri-drag-region>
+          <h2>Outline</h2>
+        </div>
+
+        {#if selectedNoteSource && outlineItems.length}
+          <nav class="outline-list" aria-label="Note outline">
+            {#each outlineItems as item}
+              <div class:level-two={item.level === 2} class:level-three={item.level === 3} class="outline-row">
+                {item.text}
+              </div>
+            {/each}
+          </nav>
+        {:else}
+          <div class="right-panel-empty">
+            No headings found.
+          </div>
+        {/if}
+      {:else if notesDock !== 'right'}
         <div class="right-panel-empty">
-          No headings found.
+          Drop tools here.
         </div>
       {/if}
     {/if}
@@ -956,8 +1082,8 @@
   }
 
   .sidebar {
-    display: grid;
-    grid-template-rows: auto minmax(0, 1fr) auto;
+    display: flex;
+    flex-direction: column;
     gap: 0.72rem;
     background: #0b0f14;
     padding: 0.72rem;
@@ -966,8 +1092,7 @@
 
   .sidebar.ribbon-panel,
   .right-panel.ribbon-panel {
-    grid-template-rows: minmax(0, 1fr);
-    justify-items: center;
+    align-items: center;
     gap: 0;
     padding: 0.55rem 0.28rem;
   }
@@ -1008,9 +1133,51 @@
     cursor: grabbing;
   }
 
-  .ribbon-button:disabled {
-    cursor: default;
+  .ribbon-button[aria-disabled='true'],
+  .panel-tool-button[aria-disabled='true'] {
     opacity: 0.42;
+  }
+
+  .panel-tool-bar {
+    display: grid;
+    gap: 0.24rem;
+    align-content: start;
+  }
+
+  .panel-tool-button {
+    display: grid;
+    grid-template-columns: 1rem minmax(0, 1fr);
+    align-items: center;
+    gap: 0.42rem;
+    width: 100%;
+    border-color: transparent;
+    background: transparent;
+    padding: 0.28rem 0.32rem;
+    color: #aeb8c4;
+    font-size: 0.76rem;
+    text-align: left;
+  }
+
+  .panel-tool-button span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .panel-tool-button:hover,
+  .panel-tool-button:focus,
+  .panel-tool-button.active {
+    border-color: #2ea987;
+    background: #10211e;
+    color: #e6edf3;
+  }
+
+  .panel-tool-button.drag-enabled {
+    cursor: grab;
+  }
+
+  .panel-tool-button.drag-enabled:active {
+    cursor: grabbing;
   }
 
   .panel-resize-handle {
@@ -1062,8 +1229,8 @@
   }
 
   .right-panel {
-    display: grid;
-    grid-template-rows: auto minmax(0, 1fr);
+    display: flex;
+    flex-direction: column;
     gap: 0.54rem;
     border-left: 1px solid #232b36;
     background: #0b0f14;
@@ -1088,6 +1255,7 @@
   .outline-list {
     display: grid;
     align-content: start;
+    flex: 1 1 auto;
     gap: 0.08rem;
     min-height: 0;
     overflow: auto;
@@ -1164,6 +1332,7 @@
   .notes-list {
     display: grid;
     align-content: start;
+    flex: 1 1 auto;
     gap: 0.22rem;
     overflow: auto;
     min-height: 0;
