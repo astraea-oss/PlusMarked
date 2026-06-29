@@ -380,45 +380,11 @@
         </button>
       </header>
 
-      <div class="editor-toolbar">
-        <div class="mode-group" aria-label="Editor mode">
-          <button
-            class:active={editorMode === 'live'}
-            class="mode-button"
-            on:click={() => (editorMode = 'live')}
-          >
-            Live
-          </button>
-          <button
-            class:active={editorMode === 'source'}
-            class="mode-button"
-            on:click={() => (editorMode = 'source')}
-          >
-            Source
-          </button>
-          <button
-            class:active={editorMode === 'split'}
-            class="mode-button"
-            on:click={() => (editorMode = 'split')}
-          >
-            Split
-          </button>
-          <button
-            class:active={editorMode === 'preview'}
-            class="mode-button"
-            on:click={() => (editorMode = 'preview')}
-          >
-            Preview
-          </button>
-        </div>
-      </div>
-
       {#if editorMode === 'live'}
         <div class="live-editor">
           <section class="live-properties" aria-label="Properties">
             <div class="live-properties-header">
               <h3>Properties</h3>
-              <button on:click={addProperty}>Add property</button>
             </div>
 
             <div class="property-list">
@@ -440,6 +406,8 @@
                 </div>
               {/each}
             </div>
+
+            <button class="add-property-button" on:click={addProperty}>Add property</button>
           </section>
 
           <textarea
@@ -480,7 +448,41 @@
       </div>
     {/if}
 
-    <footer>{status}</footer>
+    <footer>
+      <span>{status}</span>
+      {#if selectedNoteSource}
+        <div class="mode-group" aria-label="Editor mode">
+          <button
+            class:active={editorMode === 'live'}
+            class="mode-button"
+            on:click={() => (editorMode = 'live')}
+          >
+            Live
+          </button>
+          <button
+            class:active={editorMode === 'source'}
+            class="mode-button"
+            on:click={() => (editorMode = 'source')}
+          >
+            Source
+          </button>
+          <button
+            class:active={editorMode === 'split'}
+            class="mode-button"
+            on:click={() => (editorMode = 'split')}
+          >
+            Split
+          </button>
+          <button
+            class:active={editorMode === 'preview'}
+            class="mode-button"
+            on:click={() => (editorMode = 'preview')}
+          >
+            Preview
+          </button>
+        </div>
+      {/if}
+    </footer>
   </section>
 </main>
 
@@ -649,8 +651,8 @@
 
   .editor {
     display: grid;
-    grid-template-rows: auto auto minmax(0, 1fr) auto;
-    gap: 0.55rem;
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    gap: 0.38rem;
     padding: 0.72rem;
     min-width: 0;
     min-height: 0;
@@ -675,26 +677,20 @@
     white-space: nowrap;
   }
 
-  .editor-toolbar {
-    display: flex;
-    align-items: center;
-    justify-content: flex-end;
-  }
-
   .mode-group {
     display: inline-grid;
     grid-template-columns: repeat(4, auto);
-    gap: 0.22rem;
+    gap: 0.16rem;
     border: 1px solid #232b36;
-    border-radius: 6px;
+    border-radius: 5px;
     background: #0b0f14;
-    padding: 0.18rem;
+    padding: 0.12rem;
   }
 
   .mode-button {
     border-color: transparent;
-    padding: 0.24rem 0.48rem;
-    font-size: 0.76rem;
+    padding: 0.16rem 0.38rem;
+    font-size: 0.7rem;
   }
 
   .mode-button.active {
@@ -718,15 +714,15 @@
   .live-editor {
     display: grid;
     grid-template-rows: auto minmax(0, 1fr);
-    gap: 0.6rem;
+    gap: 0.34rem;
     min-height: 0;
   }
 
   .live-properties {
     display: grid;
-    gap: 0.42rem;
+    gap: 0.24rem;
     border-bottom: 1px solid #232b36;
-    padding-bottom: 0.55rem;
+    padding-bottom: 0.32rem;
   }
 
   .live-properties-header {
@@ -739,26 +735,28 @@
   .live-properties-header h3 {
     margin: 0;
     color: #c6d0dc;
-    font-size: 0.82rem;
+    font-size: 0.74rem;
     font-weight: 650;
   }
 
   .property-list {
     display: grid;
-    gap: 0.28rem;
+    gap: 0.08rem;
   }
 
   .property-row {
     display: grid;
     grid-template-columns: minmax(6rem, 0.35fr) minmax(0, 1fr) auto;
-    gap: 0.36rem;
+    gap: 0.28rem;
     align-items: center;
   }
 
   .property-row input {
     border-color: transparent;
     background: transparent;
-    padding: 0.22rem 0.28rem;
+    min-height: 1.45rem;
+    padding: 0.1rem 0.22rem;
+    font-size: 0.82rem;
   }
 
   .property-row input:first-child {
@@ -774,6 +772,12 @@
     border-color: transparent;
     background: transparent;
     padding: 0;
+  }
+
+  .add-property-button {
+    justify-self: start;
+    padding: 0.18rem 0.4rem;
+    font-size: 0.72rem;
   }
 
   .body-editor {
@@ -900,9 +904,16 @@
   }
 
   footer {
-    overflow: hidden;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 0.5rem;
     border-top: 1px solid #232b36;
-    padding-top: 0.5rem;
+    padding-top: 0.28rem;
+  }
+
+  footer span {
+    overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
