@@ -3676,7 +3676,7 @@
   }
 
   .markdown-preview :global(.mdp-missing-internal-link) {
-    color: #7fa497;
+    color: #6f827c;
   }
 
   .markdown-preview :global(.mdp-internal-link:hover),
@@ -3687,7 +3687,7 @@
 
   .markdown-preview :global(.mdp-missing-internal-link:hover),
   .markdown-preview :global(.mdp-missing-internal-link:focus) {
-    color: #a8c9bd;
+    color: #8da39b;
   }
 
   .markdown-preview :global(.mdp-inline-tag) {

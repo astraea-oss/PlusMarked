@@ -147,13 +147,13 @@
         textDecoration: 'none'
       },
       '.cm-mdp-missing-internal-link': {
-        color: '#7fa497'
+        color: '#6f827c'
       },
       '.cm-mdp-internal-link:hover, .cm-mdp-external-link:hover': {
         color: '#c4f5e5'
       },
       '.cm-mdp-missing-internal-link:hover': {
-        color: '#a8c9bd'
+        color: '#8da39b'
       },
       '.cm-mdp-editing-link': {
         color: '#4fbda0',
