@@ -142,22 +142,18 @@
       },
       '.cm-mdp-internal-link': {
         borderRadius: '4px',
-        backgroundColor: 'rgba(79, 189, 160, 0.08)',
         padding: '0 0.12rem',
         color: '#8bd5bd',
         textDecoration: 'none'
       },
       '.cm-mdp-missing-internal-link': {
-        backgroundColor: 'rgba(91, 117, 111, 0.12)',
-        color: '#85a79d'
+        color: '#7fa497'
       },
       '.cm-mdp-internal-link:hover, .cm-mdp-external-link:hover': {
-        backgroundColor: 'rgba(79, 189, 160, 0.16)',
         color: '#c4f5e5'
       },
       '.cm-mdp-missing-internal-link:hover': {
-        backgroundColor: 'rgba(91, 117, 111, 0.2)',
-        color: '#a2c2b8'
+        color: '#a8c9bd'
       },
       '.cm-mdp-editing-link': {
         color: '#4fbda0',

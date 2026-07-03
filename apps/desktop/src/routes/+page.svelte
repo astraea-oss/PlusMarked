@@ -3670,28 +3670,24 @@
 
   .markdown-preview :global(.mdp-internal-link) {
     border-radius: 4px;
-    background: rgba(79, 189, 160, 0.08);
     padding: 0 0.16rem;
     color: #8bd5bd;
     text-decoration: none;
   }
 
   .markdown-preview :global(.mdp-missing-internal-link) {
-    background: rgba(91, 117, 111, 0.12);
-    color: #85a79d;
+    color: #7fa497;
   }
 
   .markdown-preview :global(.mdp-internal-link:hover),
   .markdown-preview :global(.mdp-internal-link:focus) {
-    background: rgba(79, 189, 160, 0.16);
     color: #c4f5e5;
     text-decoration: underline;
   }
 
   .markdown-preview :global(.mdp-missing-internal-link:hover),
   .markdown-preview :global(.mdp-missing-internal-link:focus) {
-    background: rgba(91, 117, 111, 0.2);
-    color: #a2c2b8;
+    color: #a8c9bd;
   }
 
   .markdown-preview :global(.mdp-inline-tag) {
