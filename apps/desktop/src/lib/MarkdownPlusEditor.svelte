@@ -3,7 +3,7 @@
   import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
   import { markdown } from '@codemirror/lang-markdown';
   import { HighlightStyle, syntaxHighlighting } from '@codemirror/language';
-  import { EditorSelection, EditorState, type Range } from '@codemirror/state';
+  import { EditorSelection, EditorState, StateEffect, type Range } from '@codemirror/state';
   import { tags } from '@lezer/highlight';
   import {
     Decoration,
@@ -39,6 +39,7 @@
     '<': '>'
   };
   const closingPairs = new Set(Object.values(enclosingPairs));
+  const internalLinkStateChanged = StateEffect.define<void>();
   const enclosingPairKeymap = Object.entries(enclosingPairs).map(([open, close]) => ({
     key: open,
     run: (editorView: EditorView) => insertEnclosingPair(editorView, open, close)
@@ -214,7 +215,14 @@
       }
 
       update(update: ViewUpdate) {
-        if (update.docChanged || update.viewportChanged || update.selectionSet) {
+        if (
+          update.docChanged
+          || update.viewportChanged
+          || update.selectionSet
+          || update.transactions.some((transaction) =>
+            transaction.effects.some((effect) => effect.is(internalLinkStateChanged))
+          )
+        ) {
           this.decorations = lineDecorations(update.view);
         }
       }
@@ -272,7 +280,7 @@
 
   $: if (view && internalLinkSignature !== lastInternalLinkSignature) {
     lastInternalLinkSignature = internalLinkSignature;
-    view.dispatch({ selection: view.state.selection });
+    view.dispatch({ effects: internalLinkStateChanged.of() });
   }
 
   onDestroy(() => {
