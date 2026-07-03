@@ -95,6 +95,8 @@
     title: string;
     excerpt: string;
     exists: boolean;
+    kind: 'note' | 'base' | 'missing';
+    items?: string[];
   };
   type ExternalEmbedPreview = {
     label: string;
@@ -628,8 +630,11 @@
     const excerpt = preview.excerpt
       ? `<p>${escapeHtml(preview.excerpt)}</p>`
       : `<p>${preview.exists ? 'Loading preview...' : 'Click to create this note.'}</p>`;
+    const items = preview.items?.length
+      ? `<ul>${preview.items.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul>`
+      : '';
 
-    return `\n<div class="mdp-embed mdp-internal-embed${missingClass}"><a href="#${encodeURIComponent(target)}" class="mdp-embed-title" data-mdp-internal-link="${escapeHtml(target)}">${escapeHtml(preview.title)}</a>${excerpt}</div>\n`;
+    return `\n<div class="mdp-embed mdp-internal-embed mdp-${preview.kind}-embed${missingClass}"><a href="#${encodeURIComponent(target)}" class="mdp-embed-title" data-mdp-internal-link="${escapeHtml(target)}">${escapeHtml(preview.title)}</a>${excerpt}${items}</div>\n`;
   }
 
   function renderExternalEmbeds(source: string) {
@@ -1797,16 +1802,29 @@
       return {
         title: fallbackTitle || titleForInternalLinkTarget(target),
         excerpt: '',
-        exists: false
+        exists: false,
+        kind: 'missing'
       };
     }
 
     const note = notes.find((candidate) => candidate.id === noteId);
+    if (note?.note_type === 'base') {
+      const documents = notes.filter((candidate) => candidate.note_type !== 'base');
+      return {
+        title: note.title ?? fallbackTitle,
+        excerpt: `Base view · ${documents.length} document${documents.length === 1 ? '' : 's'}`,
+        exists: true,
+        kind: 'base',
+        items: documents.slice(0, 5).map((item) => item.title)
+      };
+    }
+
     const source = noteId === selectedId ? noteSource : embeddedNoteSources[noteId];
     return {
       title: note?.title ?? fallbackTitle,
       excerpt: source ? noteSourceExcerpt(source) : '',
-      exists: true
+      exists: true,
+      kind: 'note'
     };
   }
 
@@ -3951,6 +3969,22 @@
     margin: 0;
     color: #8b96a5;
     font-size: 0.82rem;
+  }
+
+  .markdown-preview :global(.mdp-embed ul) {
+    display: grid;
+    gap: 0.1rem;
+    margin: 0.1rem 0 0;
+    padding: 0;
+    list-style: none;
+    color: #aeb8c4;
+    font-size: 0.82rem;
+  }
+
+  .markdown-preview :global(.mdp-embed li) {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .markdown-preview :global(.mdp-missing-embed .mdp-embed-title) {

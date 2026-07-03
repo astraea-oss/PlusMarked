@@ -22,6 +22,8 @@
     title: string;
     excerpt: string;
     exists: boolean;
+    kind: 'note' | 'base' | 'missing';
+    items?: string[];
   };
   type ExternalEmbedPreview = {
     label: string;
@@ -44,7 +46,8 @@
   export let internalEmbedForTarget: (target: string, fallbackTitle?: string) => InternalEmbedPreview = (target) => ({
     title: target,
     excerpt: '',
-    exists: internalLinkExists(target)
+    exists: internalLinkExists(target),
+    kind: internalLinkExists(target) ? 'note' : 'missing'
   });
   export let externalEmbedForTarget: (label: string, url: string) => ExternalEmbedPreview = (label, url) => ({
     label,
@@ -223,6 +226,17 @@
       },
       '.cm-mdp-external-embed-widget .cm-mdp-embed-excerpt': {
         color: '#7d8896'
+      },
+      '.cm-mdp-embed-list': {
+        display: 'grid',
+        gap: '0.08rem',
+        color: '#aeb8c4',
+        fontSize: '0.78rem'
+      },
+      '.cm-mdp-embed-list span': {
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+        whiteSpace: 'nowrap'
       },
       '.cm-mdp-inline-tag': {
         border: '1px solid #245c50',
@@ -713,12 +727,14 @@
       return widget.target === this.target
         && widget.preview.title === this.preview.title
         && widget.preview.excerpt === this.preview.excerpt
-        && widget.preview.exists === this.preview.exists;
+        && widget.preview.exists === this.preview.exists
+        && widget.preview.kind === this.preview.kind
+        && (widget.preview.items ?? []).join('\n') === (this.preview.items ?? []).join('\n');
     }
 
     toDOM() {
       const card = document.createElement('span');
-      card.className = `cm-mdp-embed-widget cm-mdp-internal-embed-widget${this.preview.exists ? '' : ' cm-mdp-missing-embed'}`;
+      card.className = `cm-mdp-embed-widget cm-mdp-internal-embed-widget cm-mdp-${this.preview.kind}-embed${this.preview.exists ? '' : ' cm-mdp-missing-embed'}`;
       card.dataset.mdpInternalLink = this.target;
       card.setAttribute('role', 'button');
       card.setAttribute('title', this.target);
@@ -732,6 +748,17 @@
       excerpt.className = 'cm-mdp-embed-excerpt';
       excerpt.textContent = this.preview.excerpt || (this.preview.exists ? 'Loading preview...' : 'Click to create this note.');
       card.appendChild(excerpt);
+
+      if (this.preview.items?.length) {
+        const list = document.createElement('span');
+        list.className = 'cm-mdp-embed-list';
+        for (const item of this.preview.items.slice(0, 5)) {
+          const row = document.createElement('span');
+          row.textContent = item;
+          list.appendChild(row);
+        }
+        card.appendChild(list);
+      }
 
       return card;
     }
