@@ -27,6 +27,10 @@ export function createNote(title?: string): Promise<NoteSummary> {
   return invoke('create_note', { input: { title: title || 'Untitled', note_type: 'note' } });
 }
 
+export function createBase(title?: string): Promise<NoteSummary> {
+  return invoke('create_base', { input: { title: title || 'Untitled base' } });
+}
+
 export function listNotes(): Promise<NoteSummary[]> {
   return invoke('list_notes');
 }

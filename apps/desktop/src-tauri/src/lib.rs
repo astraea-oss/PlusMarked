@@ -4,7 +4,7 @@ use std::sync::Mutex;
 
 use mdp_core::NoteDocument;
 use mdp_workspace::{
-    CreateNoteInput, NoteSource, NoteSummary, SaveNoteInput, SaveNoteSourceInput, SaveResult,
+    CreateBaseInput, CreateNoteInput, NoteSource, NoteSummary, SaveNoteInput, SaveNoteSourceInput, SaveResult,
     WorkspaceHandle, WorkspaceSummary,
 };
 use serde::{Deserialize, Serialize};
@@ -192,8 +192,8 @@ fn update_app_settings(
 ) -> Result<AppSettingsSummary, String> {
     {
         let mut settings = state.settings.lock().map_err(lock_error)?;
-        settings.left_panel_width = input.left_panel_width.clamp(220, 420);
-        settings.right_panel_width = input.right_panel_width.clamp(210, 420);
+        settings.left_panel_width = input.left_panel_width.clamp(150, 420);
+        settings.right_panel_width = input.right_panel_width.clamp(150, 420);
         settings.left_panel_mode = normalize_panel_mode(&input.left_panel_mode).to_string();
         settings.right_panel_mode = normalize_panel_mode(&input.right_panel_mode).to_string();
         settings.notes_dock = normalize_dock_side(&input.notes_dock).to_string();
@@ -208,8 +208,8 @@ fn update_app_settings(
         settings.new_note_order = input.new_note_order.min(1000);
         settings.settings_order = input.settings_order.min(1000);
         settings.outline_order = input.outline_order.min(1000);
-        settings.notes_hud_height = input.notes_hud_height.clamp(96, 720);
-        settings.outline_hud_height = input.outline_hud_height.clamp(96, 720);
+        settings.notes_hud_height = input.notes_hud_height.clamp(64, 520);
+        settings.outline_hud_height = input.outline_hud_height.clamp(64, 520);
     }
 
     state.save_settings()?;
@@ -235,6 +235,13 @@ fn create_note(input: CreateNoteInput, state: State<'_, AppState>) -> Result<Not
     let guard = state.workspace.lock().map_err(lock_error)?;
     let workspace = guard.as_ref().ok_or("open a workspace first")?;
     workspace.create_note(input).map_err(to_command_error)
+}
+
+#[tauri::command]
+fn create_base(input: CreateBaseInput, state: State<'_, AppState>) -> Result<NoteSummary, String> {
+    let guard = state.workspace.lock().map_err(lock_error)?;
+    let workspace = guard.as_ref().ok_or("open a workspace first")?;
+    workspace.create_base(input).map_err(to_command_error)
 }
 
 #[tauri::command]
@@ -286,6 +293,7 @@ pub fn run() {
             update_app_settings,
             open_workspace,
             create_note,
+            create_base,
             list_notes,
             get_note,
             get_note_source,
@@ -349,11 +357,11 @@ fn default_right_dock() -> String {
 }
 
 fn default_notes_hud_height() -> u16 {
-    320
+    220
 }
 
 fn default_outline_hud_height() -> u16 {
-    190
+    120
 }
 
 fn normalize_panel_mode(mode: &str) -> &str {

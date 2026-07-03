@@ -1,18 +1,30 @@
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte';
   import {
-    FileText,
+    CalendarClock,
+    CalendarDays,
+    Cog,
+    FilePlus,
     FolderOpen,
+    Hash,
+    List,
     ListTree,
-    Plus,
-    Settings,
+    NotebookText,
+    Table,
     SlidersHorizontal,
+    SquareCheck,
+    Tags,
+    Type,
     X
   } from '@lucide/svelte';
+  import { getCurrentWindow } from '@tauri-apps/api/window';
+  import appIconUrl from '../../src-tauri/icons/icon.png';
   import DOMPurify from 'dompurify';
   import { marked } from 'marked';
+  import BasesView from '$lib/BasesView.svelte';
   import MarkdownPlusEditor from '$lib/MarkdownPlusEditor.svelte';
   import {
+    createBase,
     createNote,
     getAppSettings,
     getNoteSource,
@@ -47,24 +59,40 @@
     anchor: ToolAnchor;
     tools: RibbonTool[];
   };
+  type PointerToolDrag = {
+    tool: RibbonToolId;
+    pointerId: number;
+    startX: number;
+    startY: number;
+    dragging: boolean;
+  };
   type HudToolId = 'notes' | 'outline';
   type HudHeights = Record<HudToolId, number>;
   type PropertyRow = {
     key: string;
     value: string;
   };
+  type PropertyDisplay = {
+    text: string;
+    formatted: boolean;
+  };
+  type PropertyType = 'checkbox' | 'date' | 'datetime' | 'list' | 'number' | 'tags' | 'text';
+  type PropertyTypeOption = {
+    id: PropertyType;
+    label: string;
+  };
   type OutlineItem = {
     level: number;
     text: string;
   };
 
-  const minLeftPanelWidth = 220;
+  const minLeftPanelWidth = 150;
   const maxLeftPanelWidth = 420;
-  const minRightPanelWidth = 210;
+  const minRightPanelWidth = 150;
   const maxRightPanelWidth = 420;
-  const ribbonPanelWidth = 46;
-  const minHudHeight = 96;
-  const maxHudHeight = 720;
+  const ribbonPanelWidth = 52;
+  const minHudHeight = 64;
+  const maxHudHeight = 520;
   const defaultToolDocks: ToolDocks = {
     notes: 'left',
     'new-note': 'left',
@@ -84,9 +112,37 @@
     outline: 40
   };
   const defaultHudHeights: HudHeights = {
-    notes: 320,
-    outline: 190
+    notes: 220,
+    outline: 120
   };
+  const systemPropertyLabels: Record<string, string> = {
+    id: 'ID',
+    title: 'Title',
+    created_at: 'Created',
+    updated_at: 'Modified',
+    tags: 'Tags',
+    aliases: 'Aliases',
+    type: 'Type'
+  };
+  const propertyTypeOptions: PropertyTypeOption[] = [
+    { id: 'checkbox', label: 'Checkbox' },
+    { id: 'date', label: 'Date' },
+    { id: 'datetime', label: 'Date & time' },
+    { id: 'list', label: 'List' },
+    { id: 'number', label: 'Number' },
+    { id: 'tags', label: 'Tags' },
+    { id: 'text', label: 'Text' }
+  ];
+  const enclosingPairs: Record<string, string> = {
+    '(': ')',
+    '[': ']',
+    '{': '}',
+    '"': '"',
+    "'": "'",
+    '`': '`',
+    '<': '>'
+  };
+  const closingPairs = new Set(Object.values(enclosingPairs));
 
   let leftPanelWidth = 285;
   let rightPanelWidth = 255;
@@ -96,6 +152,12 @@
   let toolAnchors: ToolAnchors = { ...defaultToolAnchors };
   let toolOrders: ToolOrders = { ...defaultToolOrders };
   let draggingTool: RibbonToolId | null = null;
+  let pointerToolDrag: PointerToolDrag | null = null;
+  let suppressNextToolClick = false;
+  let lastWindowBadgeClick: { time: number; x: number; y: number } | null = null;
+  let tokenPropertyDrafts: Record<number, string> = {};
+  let propertyTypeMenuIndex: number | null = null;
+  let propertyTypeOverrides: Record<string, PropertyType> = {};
   let hudHeights: HudHeights = { ...defaultHudHeights };
   let workspacePath = '';
   let workspace: WorkspaceSummary | null = null;
@@ -116,7 +178,9 @@
   let editorMode: EditorMode = 'live';
 
   $: selectedId = selectedNoteSource?.id;
-  $: selectedTitle = notes.find((note) => note.id === selectedId)?.title ?? 'Untitled';
+  $: selectedDocument = notes.find((note) => note.id === selectedId) ?? null;
+  $: selectedTitle = selectedDocument?.title ?? 'Untitled';
+  $: selectedIsBase = selectedDocument?.note_type === 'base';
   $: leftPanelColumnWidth = leftPanelMode === 'ribbon' ? ribbonPanelWidth : leftPanelWidth;
   $: rightPanelColumnWidth = rightPanelMode === 'ribbon' ? ribbonPanelWidth : rightPanelWidth;
   $: ribbonTools = buildRibbonTools(toolDocks, toolAnchors, toolOrders);
@@ -156,6 +220,8 @@
     if (autosaveTimer) {
       clearTimeout(autosaveTimer);
     }
+
+    removeToolPointerListeners();
   });
 
   async function openCurrentWorkspace() {
@@ -189,6 +255,7 @@
     clearAutosaveState();
     selectedNoteSource = null;
     noteSource = '';
+    editorMode = 'live';
     settingsOpen = false;
     status = `Opened ${workspace.root}`;
   }
@@ -198,8 +265,19 @@
 
     const note = await createNote('Untitled');
     notes = await listNotes();
+    editorMode = 'live';
     await selectNote(note.id);
     status = 'Created note.';
+  }
+
+  async function createNewBase() {
+    if (!(await flushPendingAutosave())) return;
+
+    const base = await createBase('Untitled base');
+    notes = await listNotes();
+    editorMode = 'live';
+    await selectNote(base.id);
+    status = 'Created base.';
   }
 
   async function selectNote(id: string) {
@@ -212,12 +290,20 @@
     noteSource = selectedNoteSource.source;
     lastSavedNoteId = id;
     lastSavedSource = noteSource;
+    if (notes.find((note) => note.id === id)?.note_type === 'base') {
+      liveBody = '';
+      propertyRows = [];
+      status = 'Base loaded.';
+      return;
+    }
+
     syncLiveFieldsFromSource();
     status = 'Note loaded.';
   }
 
   async function saveSelectedNote(force = false): Promise<boolean> {
     if (!selectedNoteSource) return true;
+    if (selectedIsBase) return true;
 
     if (saveInFlight) {
       await saveInFlight;
@@ -341,7 +427,58 @@
   }
 
   function markdownPlusPreviewSource(source: string): string {
-    return source.replace(/^[ \t]*-{3,}[ \t]*$/gm, '\n<hr data-mdp-rule="underline">\n');
+    return preserveMarkdownBlankLines(renderInlineTags(renderWikiLinks(source)))
+      .replace(/^[ \t]*-{3,}[ \t]*$/gm, '\n<hr data-mdp-rule="underline">\n');
+  }
+
+  function preserveMarkdownBlankLines(source: string): string {
+    const lines = source.split(/\r?\n/);
+    let inFence = false;
+
+    return lines
+      .map((line) => {
+        if (/^\s*(```|~~~)/.test(line)) {
+          inFence = !inFence;
+          return line;
+        }
+
+        if (!inFence && line.trim() === '') {
+          return '<div class="mdp-blank-line" aria-hidden="true"></div>';
+        }
+
+        return line;
+      })
+      .join('\n');
+  }
+
+  function renderWikiLinks(source: string): string {
+    return source.replace(/\[\[([^\]\n]+)\]\]/g, (_match, rawLink: string) => {
+      const [rawTarget, rawLabel] = rawLink.split('|');
+      const target = rawTarget.trim();
+      const label = (rawLabel ?? rawTarget).trim();
+      if (!target) return _match;
+
+      return `<a href="#${encodeURIComponent(target)}" class="mdp-internal-link" data-mdp-internal-link="${escapeHtml(target)}">${escapeHtml(label)}</a>`;
+    });
+  }
+
+  function escapeHtml(value: string) {
+    return value
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  function renderInlineTags(source: string): string {
+    return source.replace(/(^|[\s([{>])#([A-Za-z0-9_/-]+)/g, (match, prefix: string, tag: string, offset: number, full: string) => {
+      if (offset === 0 && prefix === '' && /^#{1,6}\s/.test(full.slice(offset))) {
+        return match;
+      }
+
+      return `${prefix}<span class="mdp-inline-tag">#${escapeHtml(tag)}</span>`;
+    });
   }
 
   function extractOutline(source: string): OutlineItem[] {
@@ -440,6 +577,7 @@
 
   function startHudResize(event: PointerEvent, tool: HudToolId) {
     event.preventDefault();
+    event.stopPropagation();
 
     const startY = event.clientY;
     const startHeight = hudHeights[tool];
@@ -534,7 +672,6 @@
     return [
       { id: 'notes', label: 'Notes', dock: docks.notes, anchor: anchors.notes, order: orders.notes },
       { id: 'new-note', label: 'New note', dock: docks['new-note'], anchor: anchors['new-note'], order: orders['new-note'] },
-      { id: 'settings', label: 'Settings', dock: docks.settings, anchor: anchors.settings, order: orders.settings },
       { id: 'outline', label: 'Outline', dock: docks.outline, anchor: anchors.outline, order: orders.outline }
     ];
   }
@@ -596,68 +733,122 @@
     return tool.charAt(0).toUpperCase() + tool.slice(1);
   }
 
-  function handleRibbonDragStart(event: DragEvent, tool: RibbonToolId) {
-    draggingTool = tool;
-    event.dataTransfer?.setData('text/plain', tool);
-    event.dataTransfer?.setData('application/x-markdownplus-ribbon-tool', tool);
-    if (event.dataTransfer) {
-      event.dataTransfer.effectAllowed = 'move';
+  function startToolPointerDrag(event: PointerEvent, tool: RibbonToolId) {
+    if (event.button !== 0 || !event.isPrimary) return;
+
+    pointerToolDrag = {
+      tool,
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      dragging: false
+    };
+    window.addEventListener('pointermove', handleToolPointerMove);
+    window.addEventListener('pointerup', handleToolPointerUp);
+    window.addEventListener('pointercancel', handleToolPointerCancel);
+  }
+
+  function handleToolPointerMove(event: PointerEvent) {
+    const drag = pointerToolDrag;
+    if (!drag || event.pointerId !== drag.pointerId) return;
+
+    const distance = Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY);
+    if (!drag.dragging && distance < 4) return;
+
+    if (!drag.dragging) {
+      drag.dragging = true;
+      draggingTool = drag.tool;
+      document.body.classList.add('is-moving-tool');
+      status = `Moving ${toolLabel(drag.tool)}.`;
     }
-  }
 
-  function handleRibbonDragEnd() {
-    draggingTool = null;
-  }
-
-  function allowRibbonDrop(event: DragEvent) {
     event.preventDefault();
-    if (event.dataTransfer) {
-      event.dataTransfer.dropEffect = 'move';
-    }
   }
 
-  async function handleRibbonDrop(event: DragEvent, side: DockSide) {
+  function handleToolPointerUp(event: PointerEvent) {
+    const drag = pointerToolDrag;
+    if (!drag || event.pointerId !== drag.pointerId) return;
+
+    removeToolPointerListeners();
+    pointerToolDrag = null;
+
+    if (!drag.dragging) return;
+
     event.preventDefault();
     event.stopPropagation();
-    const tool = event.dataTransfer?.getData('application/x-markdownplus-ribbon-tool')
-      || event.dataTransfer?.getData('text/plain');
-
-    if (isRibbonToolId(tool)) {
-      await moveTool(tool, side, toolAnchors[tool], undefined, 'append', `${toolLabel(tool)} moved to ${side} panel.`);
-    }
+    suppressNextToolClick = true;
+    setTimeout(() => {
+      suppressNextToolClick = false;
+    }, 0);
+    void dropToolAtPoint(drag.tool, event.clientX, event.clientY);
   }
 
-  async function handleToolZoneDrop(event: DragEvent, side: DockSide, anchor: ToolAnchor) {
-    event.preventDefault();
-    event.stopPropagation();
-    const tool = getDraggedTool(event);
-
-    if (tool) {
-      await moveTool(tool, side, anchor, undefined, 'append');
-    }
+  function handleToolPointerCancel(event: PointerEvent) {
+    const drag = pointerToolDrag;
+    if (!drag || event.pointerId !== drag.pointerId) return;
+    clearToolDragState();
   }
 
-  async function handleToolDrop(event: DragEvent, side: DockSide, anchor: ToolAnchor, targetTool: RibbonToolId) {
-    event.preventDefault();
-    event.stopPropagation();
-    const tool = getDraggedTool(event);
+  function removeToolPointerListeners() {
+    window.removeEventListener('pointermove', handleToolPointerMove);
+    window.removeEventListener('pointerup', handleToolPointerUp);
+    window.removeEventListener('pointercancel', handleToolPointerCancel);
+  }
 
-    if (tool) {
-      if (tool === targetTool) return;
+  async function dropToolAtPoint(tool: RibbonToolId, x: number, y: number) {
+    const element = document.elementFromPoint(x, y);
+    const dropTarget = element?.closest('[data-tool-drop-side]');
 
-      const target = event.currentTarget instanceof HTMLElement ? event.currentTarget : null;
-      const placement = target && event.clientY > target.getBoundingClientRect().top + target.getBoundingClientRect().height / 2
+    if (!(dropTarget instanceof HTMLElement)) {
+      status = `Drop ${toolLabel(tool)} on a tool area.`;
+      clearToolDragState();
+      return;
+    }
+
+    const side = parseDockSide(dropTarget.dataset.toolDropSide);
+    if (!side) {
+      status = `Drop ${toolLabel(tool)} on a tool area.`;
+      clearToolDragState();
+      return;
+    }
+
+    const anchor = parseToolAnchor(dropTarget.dataset.toolDropAnchor) ?? toolAnchors[tool];
+    const targetTool = parseRibbonToolId(dropTarget.dataset.toolDropTarget);
+
+    if (targetTool === tool) {
+      clearToolDragState();
+      return;
+    }
+
+    if (targetTool && targetTool !== tool) {
+      const placement = y > dropTarget.getBoundingClientRect().top + dropTarget.getBoundingClientRect().height / 2
         ? 'after'
         : 'before';
       await moveTool(tool, side, anchor, targetTool, placement);
+    } else {
+      await moveTool(tool, side, anchor, undefined, 'append');
     }
+
+    clearToolDragState();
   }
 
-  function getDraggedTool(event: DragEvent): RibbonToolId | null {
-    const tool = event.dataTransfer?.getData('application/x-markdownplus-ribbon-tool')
-      || event.dataTransfer?.getData('text/plain');
+  function clearToolDragState() {
+    removeToolPointerListeners();
+    pointerToolDrag = null;
+    draggingTool = null;
+    document.body.classList.remove('is-moving-tool');
+  }
 
-    return isRibbonToolId(tool) ? tool : null;
+  function parseDockSide(value: string | undefined): DockSide | null {
+    return value === 'left' || value === 'right' ? value : null;
+  }
+
+  function parseToolAnchor(value: string | undefined): ToolAnchor | null {
+    return value === 'top' || value === 'center' || value === 'bottom' ? value : null;
+  }
+
+  function parseRibbonToolId(value: string | undefined): RibbonToolId | null {
+    return isRibbonToolId(value) ? value : null;
   }
 
   async function moveTool(
@@ -704,7 +895,7 @@
     return Object.fromEntries(toolIds.map((tool, index) => [tool, (index + 1) * 10])) as Partial<ToolOrders>;
   }
 
-  function isRibbonToolId(value: string | undefined): value is RibbonToolId {
+  function isRibbonToolId(value: string | null | undefined): value is RibbonToolId {
     return value === 'notes'
       || value === 'new-note'
       || value === 'settings'
@@ -729,6 +920,54 @@
 
     if (tool === 'settings') {
       settingsOpen = true;
+    }
+  }
+
+  function openSettings() {
+    settingsOpen = true;
+  }
+
+  function handleToolClick(tool: RibbonToolId) {
+    if (suppressNextToolClick) {
+      suppressNextToolClick = false;
+      return;
+    }
+
+    runRibbonTool(tool);
+  }
+
+  async function handleWindowBadgePointerDown(event: PointerEvent) {
+    if (event.button !== 0 || !event.isPrimary) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    const now = Date.now();
+    const isDoubleClick = lastWindowBadgeClick
+      && now - lastWindowBadgeClick.time < 500
+      && Math.hypot(event.clientX - lastWindowBadgeClick.x, event.clientY - lastWindowBadgeClick.y) < 6;
+
+    lastWindowBadgeClick = isDoubleClick ? null : { time: now, x: event.clientX, y: event.clientY };
+
+    if (isDoubleClick) {
+      await toggleWindowMaximize();
+      return;
+    }
+
+    try {
+      await getCurrentWindow().startDragging();
+    } catch (error) {
+      console.error('Failed to start window drag', error);
+      status = 'Window drag failed.';
+    }
+  }
+
+  async function toggleWindowMaximize() {
+    try {
+      await getCurrentWindow().toggleMaximize();
+    } catch (error) {
+      console.error('Failed to toggle window maximize', error);
+      status = 'Window maximize failed.';
     }
   }
 
@@ -795,12 +1034,47 @@
     updateSourceFromLiveFields();
   }
 
+  function setPropertyType(index: number, type: PropertyType) {
+    const property = propertyRows[index];
+    if (!property) return;
+
+    propertyTypeOverrides = {
+      ...propertyTypeOverrides,
+      [property.key.trim()]: type
+    };
+    tokenPropertyDrafts = {
+      ...tokenPropertyDrafts,
+      [index]: ''
+    };
+    propertyTypeMenuIndex = null;
+    propertyRows = propertyRows.map((row, propertyIndex) =>
+      propertyIndex === index ? { ...row, value: valueForPropertyType(type, row.value) } : row
+    );
+    updateSourceFromLiveFields();
+  }
+
+  function updatePropertyValueFromLiveInput(index: number, value: string) {
+    propertyRows = propertyRows.map((property, propertyIndex) =>
+      propertyIndex === index ? { ...property, value: sourceValueFromLiveInput(property.key, property.value, value) } : property
+    );
+    updateSourceFromLiveFields();
+  }
+
+  function updateTokenPropertyDraft(index: number, value: string) {
+    tokenPropertyDrafts = {
+      ...tokenPropertyDrafts,
+      [index]: value
+    };
+  }
+
   function addProperty() {
+    propertyTypeMenuIndex = null;
     propertyRows = [...propertyRows, { key: 'property', value: 'value' }];
     updateSourceFromLiveFields();
   }
 
   function removeProperty(index: number) {
+    propertyTypeMenuIndex = null;
     propertyRows = propertyRows.filter((_, propertyIndex) => propertyIndex !== index);
     updateSourceFromLiveFields();
   }
@@ -808,6 +1082,285 @@
   function updateLiveBody(value: string) {
     liveBody = value;
     updateSourceFromLiveFields();
+  }
+
+  function isSystemProperty(key: string) {
+    return Object.prototype.hasOwnProperty.call(systemPropertyLabels, key.trim());
+  }
+
+  function propertyLabel(key: string) {
+    const normalized = key.trim();
+    return systemPropertyLabels[normalized] ?? normalized.replace(/[_-]+/g, ' ');
+  }
+
+  function unquoteYamlScalar(value: string) {
+    const trimmed = value.trim();
+    if (
+      (trimmed.startsWith('"') && trimmed.endsWith('"'))
+      || (trimmed.startsWith("'") && trimmed.endsWith("'"))
+    ) {
+      return trimmed.slice(1, -1);
+    }
+
+    return trimmed;
+  }
+
+  function formatDateParts(year: string, month: string, day: string) {
+    return `${year}/${month}/${day}`;
+  }
+
+  function formatTimeParts(hour: string, minute: string, year: string, month: string, day: string) {
+    return `${hour}:${minute} ${formatDateParts(year, month, day)}`;
+  }
+
+  function quoteYamlString(value: string) {
+    return JSON.stringify(value);
+  }
+
+  function isTokenProperty(property: PropertyRow) {
+    const type = propertyTypeFor(property);
+    return type === 'tags' || type === 'list';
+  }
+
+  function normalizeTokenValue(type: PropertyType, value: string) {
+    const trimmed = value.trim();
+    if (type === 'tags') {
+      return trimmed.replace(/^#+/, '').trim();
+    }
+
+    return trimmed;
+  }
+
+  function propertyTypeFor(property: PropertyRow): PropertyType {
+    const normalizedKey = property.key.trim();
+    const override = propertyTypeOverrides[normalizedKey];
+    if (override) return override;
+    if (normalizedKey === 'tags') return 'tags';
+    if (normalizedKey === 'aliases') return 'list';
+
+    const value = unquoteYamlScalar(property.value.trim());
+    if (/^(true|false)$/i.test(value)) return 'checkbox';
+    if (/^\d{4}-\d{2}-\d{2}[T\s]\d{2}:\d{2}/.test(value)) return 'datetime';
+    if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return 'date';
+    if (/^-?\d+(?:\.\d+)?$/.test(value)) return 'number';
+    if (property.value.trim().startsWith('[') && property.value.trim().endsWith(']')) return 'list';
+    return 'text';
+  }
+
+  function propertyTypeLabel(type: PropertyType) {
+    return propertyTypeOptions.find((option) => option.id === type)?.label ?? 'Text';
+  }
+
+  function dateInputValue(value: string) {
+    const unquoted = unquoteYamlScalar(value);
+    return unquoted.match(/^(\d{4}-\d{2}-\d{2})/)?.[1] ?? '';
+  }
+
+  function datetimeInputValue(value: string) {
+    const unquoted = unquoteYamlScalar(value);
+    const match = unquoted.match(/^(\d{4}-\d{2}-\d{2})[T\s](\d{2}:\d{2})/);
+    return match ? `${match[1]}T${match[2]}` : '';
+  }
+
+  function checkboxInputValue(value: string) {
+    return /^true$/i.test(unquoteYamlScalar(value));
+  }
+
+  function todayDateValue() {
+    return new Date().toISOString().slice(0, 10);
+  }
+
+  function valueForPropertyType(type: PropertyType, currentValue: string) {
+    const text = unquoteYamlScalar(currentValue.trim());
+    const tokens = parseYamlArrayValue(currentValue);
+
+    if (type === 'checkbox') {
+      return /^(true|yes|1|checked)$/i.test(text) ? 'true' : 'false';
+    }
+
+    if (type === 'date') {
+      return dateInputValue(currentValue) || todayDateValue();
+    }
+
+    if (type === 'datetime') {
+      const existing = datetimeInputValue(currentValue);
+      return existing ? `${existing}:00Z` : new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
+    }
+
+    if (type === 'number') {
+      return /^-?\d+(?:\.\d+)?$/.test(text) ? text : '0';
+    }
+
+    if (type === 'tags' || type === 'list') {
+      if (tokens.length) return sourceValueFromTokens(tokens.map((token) => normalizeTokenValue(type, token)));
+      if (text && text !== '[]') return sourceValueFromTokens([normalizeTokenValue(type, text)]);
+      return '[]';
+    }
+
+    if (tokens.length) return tokens.join(', ');
+    if (/^(true|false)$/i.test(text)) return text.toLowerCase();
+    return text;
+  }
+
+  function parseYamlArrayValue(value: string) {
+    const raw = value.trim();
+    if (!raw || raw === '[]') return [];
+
+    if (raw.startsWith('[') && raw.endsWith(']')) {
+      try {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          return parsed.map((item) => String(item)).filter(Boolean);
+        }
+      } catch {
+        return raw
+          .slice(1, -1)
+          .split(',')
+          .map((item) => unquoteYamlScalar(item.trim()))
+          .filter(Boolean);
+      }
+    }
+
+    return raw
+      .split(',')
+      .map((item) => unquoteYamlScalar(item.trim()))
+      .filter(Boolean);
+  }
+
+  function sourceValueFromTokens(tokens: string[]) {
+    return `[${tokens.map(quoteYamlString).join(', ')}]`;
+  }
+
+  function propertyTokens(property: PropertyRow) {
+    return parseYamlArrayValue(property.value);
+  }
+
+  function updateTokenProperty(index: number, tokens: string[]) {
+    const deduped = Array.from(new Set(tokens.map((token) => token.trim()).filter(Boolean)));
+    propertyRows = propertyRows.map((property, propertyIndex) =>
+      propertyIndex === index ? { ...property, value: sourceValueFromTokens(deduped) } : property
+    );
+    updateSourceFromLiveFields();
+  }
+
+  function commitTokenPropertyDraft(index: number, type: PropertyType) {
+    const draft = tokenPropertyDrafts[index] ?? '';
+    const tokensToAdd = draft
+      .split(',')
+      .map((token) => normalizeTokenValue(type, token))
+      .filter(Boolean);
+
+    if (!tokensToAdd.length) return;
+
+    updateTokenProperty(index, [...propertyTokens(propertyRows[index]), ...tokensToAdd]);
+    tokenPropertyDrafts = {
+      ...tokenPropertyDrafts,
+      [index]: ''
+    };
+  }
+
+  function removeTokenPropertyItem(index: number, token: string) {
+    updateTokenProperty(index, propertyTokens(propertyRows[index]).filter((item) => item !== token));
+  }
+
+  function handleTokenPropertyKeydown(event: KeyboardEvent, index: number, type: PropertyType) {
+    if (event.key === 'Enter' || event.key === ',') {
+      event.preventDefault();
+      commitTokenPropertyDraft(index, type);
+      return;
+    }
+
+    if (event.key === 'Backspace' && !(tokenPropertyDrafts[index] ?? '')) {
+      const tokens = propertyTokens(propertyRows[index]);
+      if (tokens.length) {
+        event.preventDefault();
+        updateTokenProperty(index, tokens.slice(0, -1));
+      }
+    }
+  }
+
+  function sourceValueFromLiveInput(key: string, currentSourceValue: string, inputValue: string) {
+    const normalizedKey = key.trim();
+    const trimmed = inputValue.trim();
+    const current = currentSourceValue.trim();
+    const wasQuoted = current.startsWith('"') && current.endsWith('"');
+
+    if (normalizedKey === 'tags' || normalizedKey === 'aliases') {
+      if (!trimmed || trimmed.toLowerCase() === 'none' || trimmed === '[]') {
+        return '[]';
+      }
+
+      if (trimmed.startsWith('[')) {
+        return trimmed;
+      }
+
+      const values = trimmed
+        .split(',')
+        .map((item) => item.trim())
+        .filter(Boolean);
+
+      return `[${values.map(quoteYamlString).join(', ')}]`;
+    }
+
+    const friendlyTimestamp = trimmed.match(/^(\d{1,2}):(\d{2})\s+(\d{4})[/-](\d{2})[/-](\d{2})$/);
+    if (friendlyTimestamp) {
+      const [, hour, minute, year, month, day] = friendlyTimestamp;
+      const source = `${year}-${month}-${day}T${hour.padStart(2, '0')}:${minute}:00Z`;
+      return wasQuoted ? quoteYamlString(source) : source;
+    }
+
+    const friendlyDate = trimmed.match(/^(\d{4})[/-](\d{2})[/-](\d{2})$/);
+    if (friendlyDate) {
+      const [, year, month, day] = friendlyDate;
+      const source = `${year}-${month}-${day}`;
+      return wasQuoted ? quoteYamlString(source) : source;
+    }
+
+    return inputValue;
+  }
+
+  function propertyDisplayValue(key: string, value: string): PropertyDisplay {
+    const raw = value.trim();
+    const unquoted = unquoteYamlScalar(raw);
+    const normalizedKey = key.trim();
+    const timestamp = unquoted.match(/^(\d{4})-(\d{2})-(\d{2})[T\s](\d{2}):(\d{2})(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?$/);
+
+    if (timestamp) {
+      return {
+        text: formatTimeParts(timestamp[4], timestamp[5], timestamp[1], timestamp[2], timestamp[3]),
+        formatted: true
+      };
+    }
+
+    const date = unquoted.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (date) {
+      return {
+        text: formatDateParts(date[1], date[2], date[3]),
+        formatted: true
+      };
+    }
+
+    if (normalizedKey === 'tags' || normalizedKey === 'aliases') {
+      if (raw === '[]') {
+        return { text: 'None', formatted: true };
+      }
+
+      if (raw.startsWith('[') && raw.endsWith(']')) {
+        try {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed)) {
+            return {
+              text: parsed.length ? parsed.join(', ') : 'None',
+              formatted: true
+            };
+          }
+        } catch {
+          return { text: raw.slice(1, -1), formatted: true };
+        }
+      }
+    }
+
+    return { text: unquoted, formatted: raw !== unquoted };
   }
 
   function splitMarkdownPlusSource(source: string): { frontmatter: string; body: string } {
@@ -828,6 +1381,10 @@
   }
 
   function handleEditorKeydown(event: KeyboardEvent, target: 'source' | 'body' = 'source') {
+    if (handleTextareaPairing(event, target)) {
+      return;
+    }
+
     if (event.key !== 'Tab') {
       return;
     }
@@ -913,6 +1470,95 @@
       textarea.selectionEnd = end;
     });
   }
+
+  function handleTextareaPairing(event: KeyboardEvent, target: 'source' | 'body') {
+    if (event.ctrlKey || event.altKey || event.metaKey || event.isComposing) {
+      return false;
+    }
+
+    const open = event.key;
+    const close = enclosingPairs[open];
+    if (close) {
+      event.preventDefault();
+      const textarea = event.currentTarget as HTMLTextAreaElement;
+      const text = target === 'body' ? liveBody : noteSource;
+      const selectionStart = textarea.selectionStart;
+      const selectionEnd = textarea.selectionEnd;
+      const selected = text.slice(selectionStart, selectionEnd);
+
+      if (!selected && open === close && text.slice(selectionStart, selectionStart + close.length) === close) {
+        queueSelection(textarea, selectionStart + close.length, selectionStart + close.length);
+        return true;
+      }
+
+      setEditorText(target, text.slice(0, selectionStart) + open + selected + close + text.slice(selectionEnd));
+      const cursor = selected ? selectionEnd + open.length + close.length : selectionStart + open.length;
+      queueSelection(textarea, cursor, cursor);
+      return true;
+    }
+
+    if (closingPairs.has(event.key)) {
+      const textarea = event.currentTarget as HTMLTextAreaElement;
+      const text = target === 'body' ? liveBody : noteSource;
+      const selectionStart = textarea.selectionStart;
+      const selectionEnd = textarea.selectionEnd;
+      if (selectionStart === selectionEnd && text.slice(selectionStart, selectionStart + event.key.length) === event.key) {
+        event.preventDefault();
+        queueSelection(textarea, selectionStart + event.key.length, selectionStart + event.key.length);
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  async function handlePreviewClick(event: MouseEvent) {
+    const target = event.target instanceof Element
+      ? event.target.closest<HTMLAnchorElement>('a[data-mdp-internal-link]')
+      : null;
+    if (!target) return;
+
+    event.preventDefault();
+    await openInternalLinkTarget(target.dataset.mdpInternalLink ?? '');
+  }
+
+  async function openInternalLinkTarget(target: string) {
+    const noteId = resolveInternalLink(target);
+    if (!noteId) {
+      status = `No note found for ${target}.`;
+      return;
+    }
+
+    editorMode = 'live';
+    await selectNote(noteId);
+  }
+
+  function openExternalLinkTarget(target: string) {
+    const trimmed = target.trim();
+    if (!trimmed) return;
+
+    window.open(trimmed, '_blank', 'noopener,noreferrer');
+  }
+
+  function resolveInternalLink(target: string) {
+    const normalizedTarget = normalizeInternalLinkTarget(target);
+    return notes.find((note) =>
+      normalizeInternalLinkTarget(note.title) === normalizedTarget
+      || normalizeInternalLinkTarget(note.id) === normalizedTarget
+      || normalizeInternalLinkTarget(note.path.replace(/\\/g, '/').split('/').pop()?.replace(/\.mdp$/i, '') ?? '') === normalizedTarget
+    )?.id ?? null;
+  }
+
+  function normalizeInternalLinkTarget(target: string) {
+    return target
+      .trim()
+      .replace(/\\/g, '/')
+      .split('#')[0]
+      .split('/')
+      .pop()
+      ?.replace(/\.(md|mdp)$/i, '')
+      .toLowerCase() ?? '';
+  }
 </script>
 
 <svelte:head>
@@ -923,18 +1569,27 @@
   class="app-shell"
   style={`--left-panel-width: ${leftPanelColumnWidth}px; --right-panel-width: ${rightPanelColumnWidth}px;`}
 >
+  <div
+    class="window-drag-badge"
+    aria-label="Move MarkdownPlus window"
+    title="Move window"
+    role="button"
+    tabindex="0"
+    on:pointerdown={handleWindowBadgePointerDown}
+  >
+    <img src={appIconUrl} alt="" aria-hidden="true" />
+  </div>
+
   <aside
     class:ribbon-panel={leftPanelMode === 'ribbon'}
     class="sidebar"
-    on:dragover={allowRibbonDrop}
-    on:drop={(event) => handleRibbonDrop(event, 'left')}
+    data-tool-drop-side="left"
   >
     {#if leftPanelMode === 'ribbon'}
       <nav
         class="panel-ribbon"
         aria-label="Left ribbon"
-        on:dragover={allowRibbonDrop}
-        on:drop={(event) => handleRibbonDrop(event, 'left')}
+        data-tool-drop-side="left"
       >
         {#each leftToolZones as zone}
           <div
@@ -944,8 +1599,8 @@
             class="tool-zone"
             role="group"
             aria-label={`Left ${zone.anchor} tools`}
-            on:dragover={allowRibbonDrop}
-            on:drop={(event) => handleToolZoneDrop(event, 'left', zone.anchor)}
+            data-tool-drop-side="left"
+            data-tool-drop-anchor={zone.anchor}
           >
             {#each zone.tools as tool}
               <button
@@ -955,20 +1610,19 @@
                 aria-label={tool.label}
                 aria-disabled={tool.id === 'new-note' && !workspace}
                 title={`${tool.label} - drag to move`}
-                draggable="true"
-                on:click={() => runRibbonTool(tool.id)}
+                data-tool-drop-side="left"
+                data-tool-drop-anchor={zone.anchor}
+                data-tool-drop-target={tool.id}
+                on:click={() => handleToolClick(tool.id)}
                 on:dblclick={() => moveToolToOppositeDock(tool.id)}
-                on:dragstart={(event) => handleRibbonDragStart(event, tool.id)}
-                on:dragend={handleRibbonDragEnd}
-                on:dragover={allowRibbonDrop}
-                on:drop={(event) => handleToolDrop(event, 'left', zone.anchor, tool.id)}
+                on:pointerdown={(event) => startToolPointerDrag(event, tool.id)}
               >
                 {#if tool.id === 'notes'}
-                  <FileText size={17} />
+                  <NotebookText size={17} />
                 {:else if tool.id === 'new-note'}
-                  <Plus size={17} />
+                  <FilePlus size={17} />
                 {:else if tool.id === 'settings'}
-                  <Settings size={17} />
+                  <Cog size={17} />
                 {:else if tool.id === 'outline'}
                   <ListTree size={17} />
                 {/if}
@@ -977,12 +1631,30 @@
           </div>
         {/each}
       </nav>
+      <button
+        class:active={settingsOpen}
+        class="fixed-settings-button ribbon-button"
+        aria-label="Settings"
+        title="Settings"
+        on:click={openSettings}
+      >
+        <Cog size={17} />
+      </button>
     {:else}
-      <div class="brand" data-tauri-drag-region>
-        <div>
+      <div class="brand">
+        <div data-tauri-drag-region>
           <h1>MarkdownPlus</h1>
           <p>Local .mdp workspace</p>
         </div>
+        <button
+          class:active={settingsOpen}
+          class="fixed-settings-button icon-button"
+          aria-label="Settings"
+          title="Settings"
+          on:click={openSettings}
+        >
+          <Cog size={15} />
+        </button>
       </div>
 
       <div class="panel-tool-stack" aria-label="Left panel tools">
@@ -994,52 +1666,55 @@
             class="tool-zone"
             role="group"
             aria-label={`Left ${zone.anchor} tools`}
-            on:dragover={allowRibbonDrop}
-            on:drop={(event) => handleToolZoneDrop(event, 'left', zone.anchor)}
+            data-tool-drop-side="left"
+            data-tool-drop-anchor={zone.anchor}
           >
             {#each zone.tools as tool}
               <section
                 class="panel-tool-group"
                 role="group"
                 aria-label={tool.label}
-                draggable="true"
-                on:dragstart={(event) => handleRibbonDragStart(event, tool.id)}
-                on:dragend={handleRibbonDragEnd}
-                on:dragover={allowRibbonDrop}
-                on:drop={(event) => handleToolDrop(event, 'left', zone.anchor, tool.id)}
+                data-tool-drop-side="left"
+                data-tool-drop-anchor={zone.anchor}
+                data-tool-drop-target={tool.id}
               >
-            <div class:has-compact-action={tool.id === 'notes'} class="panel-tool-row">
+            <div
+              class:has-compact-action={tool.id === 'notes'}
+              class="panel-tool-row"
+              role="group"
+              aria-label={`${tool.label} tool handle`}
+              on:pointerdown={(event) => startToolPointerDrag(event, tool.id)}
+            >
               <button
                 class:active={tool.id === 'settings' && settingsOpen}
-                class:drag-enabled={true}
                 class="panel-tool-button"
                 aria-label={tool.label}
                 aria-disabled={tool.id === 'new-note' && !workspace}
                 title={`${tool.label} - drag to move`}
-                draggable="true"
-                on:click={() => runRibbonTool(tool.id)}
+                on:click={() => handleToolClick(tool.id)}
                 on:dblclick={() => moveToolToOppositeDock(tool.id)}
-                on:dragstart={(event) => handleRibbonDragStart(event, tool.id)}
-                on:dragend={handleRibbonDragEnd}
               >
                 {#if tool.id === 'notes'}
-                  <FileText size={15} />
+                  <NotebookText size={15} />
                 {:else if tool.id === 'new-note'}
-                  <Plus size={15} />
+                  <FilePlus size={15} />
                 {:else if tool.id === 'settings'}
-                  <Settings size={15} />
+                  <Cog size={15} />
                 {:else if tool.id === 'outline'}
                   <ListTree size={15} />
                 {/if}
                 <span>{tool.label}</span>
               </button>
               {#if tool.id === 'notes'}
-                <button class="compact-action" disabled={!workspace} on:click={createNewNote}>New</button>
+                <div class="compact-actions">
+                  <button class="compact-action" disabled={!workspace} on:click={createNewNote}>New</button>
+                  <button class="compact-action" disabled={!workspace} on:click={createNewBase}>Base</button>
+                </div>
               {/if}
             </div>
 
             {#if tool.id === 'notes'}
-              <div class="tool-hud notes-hud" style={`height: ${hudHeights.notes}px;`}>
+              <div class="tool-hud notes-hud" style={`--hud-height: ${hudHeights.notes}px;`}>
                 {#if workspace}
                   <nav class="notes-list" aria-label="Notes">
                     {#each notes as note}
@@ -1048,14 +1723,20 @@
                         class="note-row"
                         on:click={() => {
                           settingsOpen = false;
+                          editorMode = 'live';
                           selectNote(note.id);
                         }}
                       >
+                        {#if note.note_type === 'base'}
+                          <Table size={13} />
+                        {:else}
+                          <NotebookText size={13} />
+                        {/if}
                         <span class="note-title">{note.title}</span>
                       </button>
                     {/each}
                   </nav>
-                  <div class="notes-count">{notes.length} notes</div>
+                  <div class="notes-count">{notes.length} documents</div>
                 {:else}
                   <div class="sidebar-empty">Open Settings to choose a workspace.</div>
                 {/if}
@@ -1068,7 +1749,7 @@
                 on:keydown={(event) => handleHudResizeKeydown(event, 'notes')}
               ></button>
             {:else if tool.id === 'outline'}
-              <div class="tool-hud outline-hud" style={`height: ${hudHeights.outline}px;`}>
+              <div class="tool-hud outline-hud" style={`--hud-height: ${hudHeights.outline}px;`}>
                 {#if selectedNoteSource && outlineItems.length}
                   <nav class="outline-list" aria-label="Note outline">
                     {#each outlineItems as item}
@@ -1205,13 +1886,26 @@
           </section>
         </div>
       </div>
+    {:else if selectedNoteSource && selectedIsBase}
+      <BasesView
+        {notes}
+        baseTitle={selectedTitle}
+        selectedId={selectedId}
+        onOpenNote={(id) => {
+          editorMode = 'live';
+          void selectNote(id);
+        }}
+        onNotesChanged={(updatedNotes) => {
+          notes = updatedNotes;
+        }}
+        setStatus={(message) => {
+          status = message;
+        }}
+      />
     {:else if selectedNoteSource}
       <div class="note-page">
         <header class="editor-header">
-          <div>
-            <h2>{selectedTitle}</h2>
-            <p>{selectedNoteSource.id}</p>
-          </div>
+          <h2>{selectedTitle}</h2>
         </header>
 
         {#if editorMode === 'live'}
@@ -1219,19 +1913,146 @@
             <section class="live-properties" aria-label="Note properties">
               <div class="property-list">
                 {#each propertyRows as property, index}
+                  {@const propertyType = propertyTypeFor(property)}
+                  {@const displayValue = propertyDisplayValue(property.key, property.value)}
                   <div class="property-row">
-                    <input
-                      aria-label="Property name"
-                      value={property.key}
-                      on:input={(event) => updateProperty(index, 'key', event.currentTarget.value)}
-                    />
-                    <input
-                      aria-label="Property value"
-                      value={property.value}
-                      on:input={(event) => updateProperty(index, 'value', event.currentTarget.value)}
-                    />
+                    <div class="property-type-cell">
+                      <button
+                        class:active={propertyTypeMenuIndex === index}
+                        class="property-type-button"
+                        type="button"
+                        aria-label={`Change ${propertyLabel(property.key)} property type`}
+                        title={propertyTypeLabel(propertyType)}
+                        on:click={() => (propertyTypeMenuIndex = propertyTypeMenuIndex === index ? null : index)}
+                      >
+                        {#if propertyType === 'checkbox'}
+                          <SquareCheck size={14} />
+                        {:else if propertyType === 'date'}
+                          <CalendarDays size={14} />
+                        {:else if propertyType === 'datetime'}
+                          <CalendarClock size={14} />
+                        {:else if propertyType === 'list'}
+                          <List size={14} />
+                        {:else if propertyType === 'number'}
+                          <Hash size={14} />
+                        {:else if propertyType === 'tags'}
+                          <Tags size={14} />
+                        {:else}
+                          <Type size={14} />
+                        {/if}
+                      </button>
+                      {#if propertyTypeMenuIndex === index}
+                        <div class="property-type-menu" role="menu" aria-label="Property type">
+                          {#each propertyTypeOptions as option}
+                            <button
+                              class:active={propertyType === option.id}
+                              type="button"
+                              role="menuitemradio"
+                              aria-checked={propertyType === option.id}
+                              on:click={() => setPropertyType(index, option.id)}
+                            >
+                              {#if option.id === 'checkbox'}
+                                <SquareCheck size={14} />
+                              {:else if option.id === 'date'}
+                                <CalendarDays size={14} />
+                              {:else if option.id === 'datetime'}
+                                <CalendarClock size={14} />
+                              {:else if option.id === 'list'}
+                                <List size={14} />
+                              {:else if option.id === 'number'}
+                                <Hash size={14} />
+                              {:else if option.id === 'tags'}
+                                <Tags size={14} />
+                              {:else}
+                                <Type size={14} />
+                              {/if}
+                              <span>{option.label}</span>
+                              {#if propertyType === option.id}
+                                <SquareCheck size={13} />
+                              {/if}
+                            </button>
+                          {/each}
+                        </div>
+                      {/if}
+                    </div>
+                    {#if isSystemProperty(property.key)}
+                      <span class="property-label" title={property.key}>{propertyLabel(property.key)}</span>
+                    {:else}
+                      <input
+                        class="property-name-input"
+                        aria-label="Property name"
+                        value={property.key}
+                        on:input={(event) => updateProperty(index, 'key', event.currentTarget.value)}
+                      />
+                    {/if}
+                    {#if isTokenProperty(property)}
+                      {@const tokens = propertyTokens(property)}
+                      <div class="token-property-field" title={property.value}>
+                        {#each tokens as token}
+                          <span class="property-token">
+                            {#if propertyType === 'tags'}#{/if}{token}
+                            <button
+                              type="button"
+                              aria-label={`Remove ${token}`}
+                              on:click={() => removeTokenPropertyItem(index, token)}
+                            >
+                              <X size={11} />
+                            </button>
+                          </span>
+                        {/each}
+                        <input
+                          aria-label={`Add ${propertyLabel(property.key)}`}
+                          class="token-property-input"
+                          placeholder={tokens.length ? '' : `Add ${propertyLabel(property.key).toLowerCase()}`}
+                          value={tokenPropertyDrafts[index] ?? ''}
+                          on:input={(event) => updateTokenPropertyDraft(index, event.currentTarget.value)}
+                          on:keydown={(event) => handleTokenPropertyKeydown(event, index, propertyType)}
+                          on:blur={() => commitTokenPropertyDraft(index, propertyType)}
+                        />
+                      </div>
+                    {:else if propertyType === 'checkbox'}
+                      <label class="checkbox-property-field">
+                        <input
+                          type="checkbox"
+                          checked={checkboxInputValue(property.value)}
+                          on:change={(event) => updateProperty(index, 'value', event.currentTarget.checked ? 'true' : 'false')}
+                        />
+                        <span>{checkboxInputValue(property.value) ? 'Checked' : 'Unchecked'}</span>
+                      </label>
+                    {:else if propertyType === 'date'}
+                      <input
+                        aria-label="Property date"
+                        class="formatted-property-input"
+                        type="date"
+                        value={dateInputValue(property.value)}
+                        on:input={(event) => updateProperty(index, 'value', event.currentTarget.value)}
+                      />
+                    {:else if propertyType === 'datetime'}
+                      <input
+                        aria-label="Property date and time"
+                        class="formatted-property-input"
+                        type="datetime-local"
+                        value={datetimeInputValue(property.value)}
+                        on:input={(event) => updateProperty(index, 'value', event.currentTarget.value ? `${event.currentTarget.value}:00Z` : '')}
+                      />
+                    {:else if propertyType === 'number'}
+                      <input
+                        aria-label="Property number"
+                        type="number"
+                        value={unquoteYamlScalar(property.value)}
+                        on:input={(event) => updateProperty(index, 'value', event.currentTarget.value)}
+                      />
+                    {:else}
+                      <input
+                        aria-label="Property value"
+                        class:formatted-property-input={displayValue.formatted}
+                        title={displayValue.formatted ? property.value : undefined}
+                        value={displayValue.text}
+                        on:input={(event) => updatePropertyValueFromLiveInput(index, event.currentTarget.value)}
+                      />
+                    {/if}
                     <button class="property-remove-button" aria-label="Remove property" on:click={() => removeProperty(index)}>
-                      X
+                      <X size={13} />
                     </button>
                   </div>
                 {/each}
@@ -1245,6 +2066,8 @@
                 value={liveBody}
                 ariaLabel="MarkdownPlus body"
                 onChange={updateLiveBody}
+                onInternalLink={(target) => void openInternalLinkTarget(target)}
+                onExternalLink={openExternalLinkTarget}
               />
             </div>
           </div>
@@ -1265,7 +2088,9 @@
             {/if}
 
             {#if editorMode !== 'source'}
-            <article class="markdown-preview">
+            <!-- svelte-ignore a11y_click_events_have_key_events -->
+            <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+            <article class="markdown-preview" on:click={handlePreviewClick}>
               {@html markdownHtml}
             </article>
             {/if}
@@ -1281,8 +2106,8 @@
 
     <footer>
       <span>{status}</span>
-      {#if selectedNoteSource && !settingsOpen}
-        <div class="mode-group" aria-label="Editor mode">
+      {#if selectedNoteSource && !selectedIsBase && !settingsOpen}
+        <div class="mode-group" aria-label="Note view">
           <button
             class:active={editorMode === 'live'}
             class="mode-button"
@@ -1328,15 +2153,13 @@
   <aside
     class:ribbon-panel={rightPanelMode === 'ribbon'}
     class="right-panel"
-    on:dragover={allowRibbonDrop}
-    on:drop={(event) => handleRibbonDrop(event, 'right')}
+    data-tool-drop-side="right"
   >
     {#if rightPanelMode === 'ribbon'}
       <nav
         class="panel-ribbon"
         aria-label="Right ribbon"
-        on:dragover={allowRibbonDrop}
-        on:drop={(event) => handleRibbonDrop(event, 'right')}
+        data-tool-drop-side="right"
       >
         {#each rightToolZones as zone}
           <div
@@ -1346,8 +2169,8 @@
             class="tool-zone"
             role="group"
             aria-label={`Right ${zone.anchor} tools`}
-            on:dragover={allowRibbonDrop}
-            on:drop={(event) => handleToolZoneDrop(event, 'right', zone.anchor)}
+            data-tool-drop-side="right"
+            data-tool-drop-anchor={zone.anchor}
           >
             {#each zone.tools as tool}
               <button
@@ -1357,20 +2180,19 @@
                 aria-label={tool.label}
                 aria-disabled={tool.id === 'new-note' && !workspace}
                 title={`${tool.label} - drag to move`}
-                draggable="true"
-                on:click={() => runRibbonTool(tool.id)}
+                data-tool-drop-side="right"
+                data-tool-drop-anchor={zone.anchor}
+                data-tool-drop-target={tool.id}
+                on:click={() => handleToolClick(tool.id)}
                 on:dblclick={() => moveToolToOppositeDock(tool.id)}
-                on:dragstart={(event) => handleRibbonDragStart(event, tool.id)}
-                on:dragend={handleRibbonDragEnd}
-                on:dragover={allowRibbonDrop}
-                on:drop={(event) => handleToolDrop(event, 'right', zone.anchor, tool.id)}
+                on:pointerdown={(event) => startToolPointerDrag(event, tool.id)}
               >
                 {#if tool.id === 'notes'}
-                  <FileText size={17} />
+                  <NotebookText size={17} />
                 {:else if tool.id === 'new-note'}
-                  <Plus size={17} />
+                  <FilePlus size={17} />
                 {:else if tool.id === 'settings'}
-                  <Settings size={17} />
+                  <Cog size={17} />
                 {:else if tool.id === 'outline'}
                   <ListTree size={17} />
                 {/if}
@@ -1389,52 +2211,55 @@
             class="tool-zone"
             role="group"
             aria-label={`Right ${zone.anchor} tools`}
-            on:dragover={allowRibbonDrop}
-            on:drop={(event) => handleToolZoneDrop(event, 'right', zone.anchor)}
+            data-tool-drop-side="right"
+            data-tool-drop-anchor={zone.anchor}
           >
             {#each zone.tools as tool}
               <section
                 class="panel-tool-group"
                 role="group"
                 aria-label={tool.label}
-                draggable="true"
-                on:dragstart={(event) => handleRibbonDragStart(event, tool.id)}
-                on:dragend={handleRibbonDragEnd}
-                on:dragover={allowRibbonDrop}
-                on:drop={(event) => handleToolDrop(event, 'right', zone.anchor, tool.id)}
+                data-tool-drop-side="right"
+                data-tool-drop-anchor={zone.anchor}
+                data-tool-drop-target={tool.id}
               >
-            <div class:has-compact-action={tool.id === 'notes'} class="panel-tool-row">
+            <div
+              class:has-compact-action={tool.id === 'notes'}
+              class="panel-tool-row"
+              role="group"
+              aria-label={`${tool.label} tool handle`}
+              on:pointerdown={(event) => startToolPointerDrag(event, tool.id)}
+            >
               <button
                 class:active={tool.id === 'settings' && settingsOpen}
-                class:drag-enabled={true}
                 class="panel-tool-button"
                 aria-label={tool.label}
                 aria-disabled={tool.id === 'new-note' && !workspace}
                 title={`${tool.label} - drag to move`}
-                draggable="true"
-                on:click={() => runRibbonTool(tool.id)}
+                on:click={() => handleToolClick(tool.id)}
                 on:dblclick={() => moveToolToOppositeDock(tool.id)}
-                on:dragstart={(event) => handleRibbonDragStart(event, tool.id)}
-                on:dragend={handleRibbonDragEnd}
               >
                 {#if tool.id === 'notes'}
-                  <FileText size={15} />
+                  <NotebookText size={15} />
                 {:else if tool.id === 'new-note'}
-                  <Plus size={15} />
+                  <FilePlus size={15} />
                 {:else if tool.id === 'settings'}
-                  <Settings size={15} />
+                  <Cog size={15} />
                 {:else if tool.id === 'outline'}
                   <ListTree size={15} />
                 {/if}
                 <span>{tool.label}</span>
               </button>
               {#if tool.id === 'notes'}
-                <button class="compact-action" disabled={!workspace} on:click={createNewNote}>New</button>
+                <div class="compact-actions">
+                  <button class="compact-action" disabled={!workspace} on:click={createNewNote}>New</button>
+                  <button class="compact-action" disabled={!workspace} on:click={createNewBase}>Base</button>
+                </div>
               {/if}
             </div>
 
             {#if tool.id === 'notes'}
-              <div class="tool-hud notes-hud" style={`height: ${hudHeights.notes}px;`}>
+              <div class="tool-hud notes-hud" style={`--hud-height: ${hudHeights.notes}px;`}>
                 {#if workspace}
                   <nav class="notes-list" aria-label="Notes">
                     {#each notes as note}
@@ -1443,14 +2268,20 @@
                         class="note-row"
                         on:click={() => {
                           settingsOpen = false;
+                          editorMode = 'live';
                           selectNote(note.id);
                         }}
                       >
+                        {#if note.note_type === 'base'}
+                          <Table size={13} />
+                        {:else}
+                          <NotebookText size={13} />
+                        {/if}
                         <span class="note-title">{note.title}</span>
                       </button>
                     {/each}
                   </nav>
-                  <div class="notes-count">{notes.length} notes</div>
+                  <div class="notes-count">{notes.length} documents</div>
                 {:else}
                   <div class="sidebar-empty">Open Settings to choose a workspace.</div>
                 {/if}
@@ -1463,7 +2294,7 @@
                 on:keydown={(event) => handleHudResizeKeydown(event, 'notes')}
               ></button>
             {:else if tool.id === 'outline'}
-              <div class="tool-hud outline-hud" style={`height: ${hudHeights.outline}px;`}>
+              <div class="tool-hud outline-hud" style={`--hud-height: ${hudHeights.outline}px;`}>
                 {#if selectedNoteSource && outlineItems.length}
                   <nav class="outline-list" aria-label="Note outline">
                     {#each outlineItems as item}
@@ -1505,17 +2336,55 @@
   .app-shell {
     display: grid;
     grid-template-columns: var(--left-panel-width) 4px minmax(0, 1fr) 4px var(--right-panel-width);
+    position: relative;
     min-height: 100vh;
     max-height: 100vh;
     background: #0d1117;
   }
 
+  .window-drag-badge {
+    display: grid;
+    place-items: center;
+    position: absolute;
+    top: 0.25rem;
+    left: 0.25rem;
+    z-index: 20;
+    width: 3rem;
+    height: 3rem;
+    border: 1px solid #2a3b45;
+    border-radius: 6px;
+    background: #10211e;
+    padding: 0.34rem;
+    color: #9fdcc9;
+    line-height: 1;
+    cursor: move;
+    user-select: none;
+  }
+
+  .window-drag-badge img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    border-radius: 3px;
+    object-fit: contain;
+    pointer-events: none;
+  }
+
+  .window-drag-badge:hover,
+  .window-drag-badge:focus {
+    border-color: #2ea987;
+    background: #10211e;
+    color: #baf0de;
+  }
+
   .sidebar {
     display: flex;
+    grid-column: 1;
+    grid-row: 1;
     flex-direction: column;
     gap: 0.72rem;
     background: #0b0f14;
-    padding: 0.72rem;
+    padding: 3.65rem 0.72rem 0.72rem;
     min-height: 0;
   }
 
@@ -1523,29 +2392,34 @@
   .right-panel.ribbon-panel {
     align-items: center;
     gap: 0;
-    padding: 0.55rem 0.28rem;
+    padding: 0.55rem 0.2rem;
+  }
+
+  .sidebar.ribbon-panel {
+    padding-top: 3.65rem;
   }
 
   .panel-ribbon {
     display: grid;
-    grid-template-rows: minmax(2.4rem, 1.2fr) minmax(2.4rem, 1fr) minmax(2.4rem, 1.2fr);
+    grid-template-rows: minmax(0, 1fr) 0 minmax(0, 1fr);
     flex: 1 1 auto;
     gap: 0.36rem;
     width: 100%;
     min-height: 0;
+    overflow: hidden;
   }
 
   .tool-zone {
     display: grid;
     align-content: start;
     gap: 0.32rem;
-    min-height: 1rem;
+    min-height: 0;
     min-width: 0;
     width: 100%;
   }
 
   .tool-zone.drop-ready {
-    min-height: 2rem;
+    min-height: 1.65rem;
     outline: 1px dashed transparent;
     outline-offset: -2px;
   }
@@ -1571,15 +2445,35 @@
     align-content: end;
   }
 
+  .tool-zone.drop-ready:empty {
+    align-self: start;
+  }
+
+  .tool-zone.center-zone.drop-ready:empty {
+    align-self: center;
+  }
+
+  .tool-zone.bottom-zone.drop-ready:empty {
+    align-self: end;
+  }
+
   .ribbon-button {
     display: grid;
     place-items: center;
-    width: 2rem;
-    height: 2rem;
+    width: 1.85rem;
+    height: 1.85rem;
     border-color: transparent;
     background: transparent;
     padding: 0;
     color: #8d98a6;
+  }
+
+  .fixed-settings-button {
+    flex: 0 0 auto;
+  }
+
+  .sidebar.ribbon-panel .fixed-settings-button {
+    margin-top: 0.55rem;
   }
 
   .ribbon-button:hover,
@@ -1604,12 +2498,24 @@
   }
 
   .panel-tool-stack {
-    display: grid;
-    grid-template-rows: minmax(2.4rem, 1.2fr) minmax(2.4rem, 1fr) minmax(2.4rem, 1.2fr);
+    display: flex;
+    flex-direction: column;
     flex: 1 1 auto;
     min-height: 0;
     gap: 0.38rem;
     overflow: auto;
+  }
+
+  .panel-tool-stack .tool-zone {
+    align-content: start;
+    align-self: stretch;
+    flex: 0 0 auto;
+  }
+
+  .panel-tool-stack .tool-zone.center-zone,
+  .panel-tool-stack .tool-zone.bottom-zone {
+    align-content: start;
+    align-self: stretch;
   }
 
   .panel-tool-group {
@@ -1618,11 +2524,11 @@
     min-height: 0;
   }
 
-  .panel-tool-group[draggable='true'] {
+  .panel-tool-row {
     cursor: grab;
   }
 
-  .panel-tool-group[draggable='true']:active {
+  .panel-tool-row:active {
     cursor: grabbing;
   }
 
@@ -1658,6 +2564,11 @@
     line-height: 1;
   }
 
+  .compact-actions {
+    display: inline-flex;
+    gap: 0.2rem;
+  }
+
   .panel-tool-button span {
     overflow: hidden;
     text-overflow: ellipsis;
@@ -1672,19 +2583,13 @@
     color: #e6edf3;
   }
 
-  .panel-tool-button.drag-enabled {
-    cursor: grab;
-  }
-
-  .panel-tool-button.drag-enabled:active {
-    cursor: grabbing;
-  }
-
   .tool-hud {
     display: grid;
     grid-template-rows: auto minmax(0, 1fr);
     gap: 0.34rem;
+    height: min(var(--hud-height, 10rem), 30vh);
     min-height: 0;
+    max-height: 18rem;
     overflow: hidden;
     padding: 0.22rem 0 0.08rem 1.42rem;
   }
@@ -1692,11 +2597,15 @@
   .notes-hud {
     grid-template-rows: minmax(0, 1fr) auto;
     gap: 0.22rem;
+    height: min(var(--hud-height, 13rem), 32vh);
+    max-height: 20rem;
     padding-left: 0;
   }
 
   .outline-hud {
     grid-template-rows: minmax(0, 1fr);
+    height: min(var(--hud-height, 8rem), 24vh);
+    max-height: 14rem;
   }
 
   .hud-resize-handle {
@@ -1718,9 +2627,11 @@
   }
 
   .panel-resize-handle {
+    grid-column: 2;
+    grid-row: 1;
     width: 4px;
     min-width: 4px;
-    height: 100vh;
+    height: 100%;
     border: 0;
     border-right: 1px solid #232b36;
     border-left: 1px solid transparent;
@@ -1749,6 +2660,7 @@
   }
 
   .right-resize-handle {
+    grid-column: 4;
     border-right: 1px solid transparent;
     border-left: 1px solid #232b36;
   }
@@ -1771,8 +2683,16 @@
     user-select: none !important;
   }
 
+  :global(body.is-moving-tool),
+  :global(body.is-moving-tool *) {
+    cursor: grabbing !important;
+    user-select: none !important;
+  }
+
   .right-panel {
     display: flex;
+    grid-column: 5;
+    grid-row: 1;
     flex-direction: column;
     gap: 0.54rem;
     border-left: 1px solid #232b36;
@@ -1825,6 +2745,13 @@
     line-height: 1.35;
   }
 
+  .brand {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: start;
+    gap: 0.5rem;
+  }
+
   .brand h1 {
     margin: 0;
     color: #f0f4f8;
@@ -1833,7 +2760,6 @@
   }
 
   .brand p,
-  .editor-header p,
   .empty-state p,
   footer {
     margin: 0.15rem 0 0;
@@ -2010,8 +2936,18 @@
     font-size: 0.72rem;
   }
 
+  .icon-button.active,
+  .fixed-settings-button.active {
+    border-color: #2ea987;
+    background: #10211e;
+    color: #e6edf3;
+  }
+
   .note-row {
     display: grid;
+    grid-template-columns: 0.9rem minmax(0, 1fr);
+    align-items: center;
+    gap: 0.28rem;
     width: 100%;
     text-align: left;
     background: #0f141b;
@@ -2037,6 +2973,8 @@
 
   .editor {
     display: grid;
+    grid-column: 3;
+    grid-row: 1;
     grid-template-rows: minmax(0, 1fr) auto;
     gap: 0.34rem;
     padding: 0.72rem;
@@ -2054,26 +2992,26 @@
   }
 
   .editor-header {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    align-items: start;
-    gap: 0.72rem;
+    display: block;
+    text-align: center;
   }
 
   .editor-header h2 {
     overflow: hidden;
     margin: 0;
-    color: #f0f4f8;
+    color: #8bd5bd;
     font-size: 1.16rem;
     font-weight: 700;
     line-height: 1.2;
+    text-align: center;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
 
   .mode-group {
     display: inline-grid;
-    grid-template-columns: repeat(4, auto);
+    grid-auto-flow: column;
+    grid-auto-columns: max-content;
     gap: 0.16rem;
     border: 1px solid #232b36;
     border-radius: 5px;
@@ -2125,13 +3063,81 @@
 
   .property-row {
     display: grid;
-    grid-template-columns: minmax(5.5rem, 0.26fr) minmax(0, 1fr) 1.35rem;
+    grid-template-columns: 1.45rem minmax(5.5rem, 0.26fr) minmax(0, 1fr) 1.35rem;
     gap: 0.22rem;
     align-items: center;
+    position: relative;
     min-height: 1.34rem;
   }
 
-  .property-row input {
+  .property-type-cell {
+    position: relative;
+    display: grid;
+    place-items: center;
+    min-width: 0;
+  }
+
+  .property-type-button {
+    display: grid;
+    place-items: center;
+    width: 1.28rem;
+    height: 1.28rem;
+    border-color: transparent;
+    background: transparent;
+    color: #8d98a6;
+    padding: 0;
+  }
+
+  .property-type-button:hover,
+  .property-type-button:focus,
+  .property-type-button.active {
+    border-color: #303946;
+    background: #10161f;
+    color: #d7dde4;
+  }
+
+  .property-type-menu {
+    display: grid;
+    position: absolute;
+    top: 1.45rem;
+    left: 0;
+    z-index: 35;
+    width: 12rem;
+    border: 1px solid #2a2035;
+    border-radius: 5px;
+    background: #120318;
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.42);
+    padding: 0.25rem;
+  }
+
+  .property-type-menu button {
+    display: grid;
+    grid-template-columns: 1rem minmax(0, 1fr) 1rem;
+    align-items: center;
+    gap: 0.44rem;
+    min-height: 1.72rem;
+    border-color: transparent;
+    background: transparent;
+    color: #b9c7d5;
+    padding: 0.22rem 0.38rem;
+    text-align: left;
+  }
+
+  .property-type-menu button:hover,
+  .property-type-menu button:focus,
+  .property-type-menu button.active {
+    background: #24152d;
+    color: #f0f4f8;
+  }
+
+  .property-type-menu button span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .property-row input,
+  .property-label {
     border-color: transparent;
     background: transparent;
     min-height: 1.26rem;
@@ -2139,13 +3145,97 @@
     font-size: 0.8rem;
   }
 
-  .property-row input:first-child {
+  .property-name-input,
+  .property-label {
     color: #8d98a6;
+  }
+
+  .property-label {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .property-label {
+    text-transform: none;
+  }
+
+  .formatted-property-input {
+    color: #d7dde4;
+  }
+
+  .token-property-field {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.22rem;
+    min-width: 0;
+    min-height: 1.26rem;
+    padding: 0.02rem 0.18rem;
+  }
+
+  .property-token {
+    display: inline-flex;
+    align-items: center;
+    max-width: 100%;
+    gap: 0.12rem;
+    border: 1px solid #245c50;
+    border-radius: 999px;
+    background: #10211e;
+    color: #8bd5bd;
+    padding: 0.08rem 0.22rem 0.08rem 0.36rem;
+    font-size: 0.76rem;
+    line-height: 1.15;
+  }
+
+  .property-token button {
+    display: grid;
+    place-items: center;
+    width: 0.92rem;
+    height: 0.92rem;
+    border: 0;
+    background: transparent;
+    color: #61b89e;
+    padding: 0;
+  }
+
+  .property-token button:hover,
+  .property-token button:focus {
+    color: #c4f5e5;
+    outline: none;
+  }
+
+  .property-row .token-property-input {
+    flex: 1 1 4.5rem;
+    width: auto;
+    min-width: 4.5rem;
+    padding-left: 0.08rem;
   }
 
   .property-row input:focus {
     border-color: #303946;
     background: #10161f;
+  }
+
+  .checkbox-property-field {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.42rem;
+    min-width: 0;
+    min-height: 1.26rem;
+    padding: 0.04rem 0.18rem;
+    color: #d7dde4;
+    font-size: 0.8rem;
+  }
+
+  .checkbox-property-field input {
+    width: 0.92rem;
+    height: 0.92rem;
+    min-height: 0;
+    accent-color: #2ea987;
   }
 
   .add-property-button {
@@ -2238,7 +3328,7 @@
   .markdown-preview :global(h2),
   .markdown-preview :global(h3) {
     margin: 0 0 0.28rem;
-    color: #f0f4f8;
+    color: #8bd5bd;
     line-height: 1.15;
   }
 
@@ -2266,6 +3356,33 @@
   .markdown-preview :global(p),
   .markdown-preview :global(li) {
     white-space: pre-wrap;
+  }
+
+  .markdown-preview :global(ul),
+  .markdown-preview :global(ol) {
+    padding-left: 1.36rem;
+  }
+
+  .markdown-preview :global(li:has(> input[type='checkbox'])) {
+    display: flex;
+    align-items: center;
+    gap: 0.28rem;
+    list-style: none;
+    margin-left: -1.1rem;
+    white-space: normal;
+  }
+
+  .markdown-preview :global(input[type='checkbox']) {
+    flex: 0 0 auto;
+    box-sizing: border-box;
+    width: 0.82rem;
+    height: 0.82rem;
+    min-height: 0;
+    margin: 0;
+    border-color: #245c50;
+    padding: 0;
+    accent-color: #2ea987;
+    vertical-align: -0.12rem;
   }
 
   .markdown-preview :global(strong) {
@@ -2306,6 +3423,36 @@
     color: #4fbda0;
   }
 
+  .markdown-preview :global(.mdp-internal-link) {
+    border-radius: 4px;
+    background: rgba(79, 189, 160, 0.08);
+    padding: 0 0.16rem;
+    color: #8bd5bd;
+    text-decoration: none;
+  }
+
+  .markdown-preview :global(.mdp-internal-link:hover),
+  .markdown-preview :global(.mdp-internal-link:focus) {
+    background: rgba(79, 189, 160, 0.16);
+    color: #c4f5e5;
+    text-decoration: underline;
+  }
+
+  .markdown-preview :global(.mdp-inline-tag) {
+    border: 1px solid #245c50;
+    border-radius: 999px;
+    background: #10211e;
+    color: #8bd5bd;
+    padding: 0 0.22rem;
+    font-weight: 650;
+  }
+
+  .markdown-preview :global(.mdp-blank-line) {
+    display: block;
+    height: 1.35em;
+    margin: 0;
+  }
+
   .markdown-preview :global([data-mdp-rule='underline']) {
     display: block;
     height: 0;
@@ -2343,13 +3490,15 @@
     white-space: nowrap;
   }
 
-  @media (max-width: 760px) {
+  @media (max-width: 399px) {
     .app-shell {
       grid-template-columns: 1fr;
       grid-template-rows: auto minmax(0, 1fr) auto;
     }
 
     .sidebar {
+      grid-column: 1;
+      grid-row: 1;
       border-right: 0;
       border-bottom: 1px solid #232b36;
     }
@@ -2359,9 +3508,16 @@
     }
 
     .right-panel {
+      grid-column: 1;
+      grid-row: 3;
       border-top: 1px solid #232b36;
       border-left: 0;
       max-height: 28vh;
+    }
+
+    .editor {
+      grid-column: 1;
+      grid-row: 2;
     }
 
   }
