@@ -107,6 +107,28 @@ impl WorkspaceHandle {
         self.base_summary_for_path(&path)
     }
 
+    pub fn rename_base(&self, id: &str, title: &str) -> Result<NoteSummary> {
+        let path = self
+            .base_path_from_id(id)?
+            .ok_or_else(|| anyhow!("base not found: {id}"))?;
+        if !path.exists() {
+            return Err(anyhow!("base not found: {id}"));
+        }
+
+        let next_path = self.base_path_for_title(title, Some(&path))?;
+        if !paths_equal(&next_path, Some(&path)) {
+            fs::rename(&path, &next_path).with_context(|| {
+                format!(
+                    "renaming base {} to {}",
+                    path.to_string_lossy(),
+                    next_path.to_string_lossy()
+                )
+            })?;
+        }
+
+        self.base_summary_for_path(&next_path)
+    }
+
     pub fn list_notes(&self) -> Result<Vec<NoteSummary>> {
         let mut documents = self.database.list_notes()?;
         documents.extend(self.list_bases()?);
@@ -201,6 +223,32 @@ impl WorkspaceHandle {
         Ok(SaveResult {
             note: self.find_summary(&document_id)?,
         })
+    }
+
+    pub fn delete_note(&self, id: &str) -> Result<()> {
+        if let Some(path) = self.base_path_from_id(id)? {
+            if !path.exists() {
+                return Err(anyhow!("base not found: {id}"));
+            }
+
+            fs::remove_file(&path)
+                .with_context(|| format!("deleting base {}", path.to_string_lossy()))?;
+            return Ok(());
+        }
+
+        let path = self
+            .database
+            .note_path(id)?
+            .unwrap_or_else(|| self.note_path(id));
+
+        if !path.exists() {
+            return Err(anyhow!("note not found: {id}"));
+        }
+
+        fs::remove_file(&path)
+            .with_context(|| format!("deleting note {}", path.to_string_lossy()))?;
+        self.database.delete_note(id)?;
+        Ok(())
     }
 
     fn reindex_notes(&self) -> Result<()> {
@@ -639,6 +687,60 @@ mod tests {
         assert!(saved_again.source.contains("Body two"));
         assert_no_write_temporary_files(&workspace.root.join("notes"))?;
 
+        Ok(())
+    }
+
+    #[test]
+    fn delete_note_removes_file_and_index_entry() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let workspace = WorkspaceHandle::open(temp.path())?;
+        let note = workspace.create_note(CreateNoteInput {
+            title: Some("Delete Me".to_string()),
+            note_type: None,
+        })?;
+        let path = PathBuf::from(&note.path);
+
+        workspace.delete_note(&note.id)?;
+
+        assert!(!path.exists());
+        assert!(workspace.list_notes()?.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn delete_note_removes_base_file() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let workspace = WorkspaceHandle::open(temp.path())?;
+        let base = workspace.create_base(CreateBaseInput {
+            title: Some("Delete Base".to_string()),
+        })?;
+        let path = PathBuf::from(&base.path);
+
+        workspace.delete_note(&base.id)?;
+
+        assert!(!path.exists());
+        assert!(workspace.list_notes()?.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn rename_base_updates_path_and_summary_id() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let workspace = WorkspaceHandle::open(temp.path())?;
+        let base = workspace.create_base(CreateBaseInput {
+            title: Some("Original Base".to_string()),
+        })?;
+        let original_path = PathBuf::from(&base.path);
+
+        let renamed = workspace.rename_base(&base.id, "Renamed Base")?;
+
+        assert_eq!(renamed.title, "Renamed Base");
+        assert_ne!(renamed.id, base.id);
+        assert!(!original_path.exists());
+        assert_eq!(
+            PathBuf::from(&renamed.path).file_name().and_then(|name| name.to_str()),
+            Some("Renamed Base.base")
+        );
         Ok(())
     }
 

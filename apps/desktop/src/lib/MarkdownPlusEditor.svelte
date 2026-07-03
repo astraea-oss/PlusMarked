@@ -11,6 +11,7 @@
     WidgetType,
     ViewPlugin,
     keymap,
+    lineNumbers,
     placeholder,
     type DecorationSet,
     type ViewUpdate
@@ -69,6 +70,19 @@
         fontFamily: '"SFMono-Regular", Consolas, "Liberation Mono", Menlo, ui-monospace, monospace',
         lineHeight: '1.35'
       },
+      '.cm-gutters': {
+        border: '0',
+        backgroundColor: 'transparent',
+        color: '#687586'
+      },
+      '.cm-lineNumbers .cm-gutterElement': {
+        minWidth: '2.4rem',
+        padding: '0 0.55rem 0 0.2rem'
+      },
+      '.cm-activeLineGutter': {
+        backgroundColor: 'rgba(79, 189, 160, 0.06)',
+        color: '#9aa6b2'
+      },
       '.cm-content': {
         minHeight: '100%',
         padding: '0.12rem 0 0',
@@ -114,7 +128,6 @@
         content: '""',
         display: 'inline-block',
         width: 'min(22rem, 64%)',
-        marginLeft: '0.7rem',
         verticalAlign: 'middle',
         borderTop: '2px solid #5d6b7c'
       },
@@ -214,6 +227,7 @@
           history(),
           markdown(),
           placeholder(''),
+          lineNumbers(),
           EditorView.lineWrapping,
           markdownPlusTheme,
           syntaxHighlighting(markdownPlusHighlight),
@@ -260,8 +274,10 @@
       let position = from;
       while (position <= to) {
         const line = editorView.state.doc.lineAt(position);
-        if (/^[ \t]*-{3,}[ \t]*$/.test(line.text)) {
+        const divider = line.text.match(/^([ \t]*)-{3,}[ \t]*$/);
+        if (divider) {
           decorations.push(Decoration.line({ class: 'cm-mdp-divider-line' }).range(line.from));
+          addDividerMarkerDecorations(editorView, decorations, line.text, line.from, divider[1].length);
           if (line.number > 1) {
             const previousLine = editorView.state.doc.line(line.number - 1);
             if (previousLine.text.trim() && !/^\s*#{1,3}\s+\S/.test(previousLine.text)) {
@@ -269,19 +285,81 @@
             }
           }
         } else {
-          const heading = line.text.match(/^\s*(#{1,3})\s+\S/);
+          const heading = line.text.match(/^(\s*)(#{1,3})(\s+)\S/);
           if (heading) {
-            decorations.push(Decoration.line({ class: `cm-mdp-heading-${heading[1].length}` }).range(line.from));
+            decorations.push(Decoration.line({ class: `cm-mdp-heading-${heading[2].length}` }).range(line.from));
+            addHeadingMarkerDecorations(editorView, decorations, line.from, heading);
           }
         }
         addListDecorations(editorView, decorations, line.text, line.from);
+        addEmphasisDecorations(editorView, decorations, line.text, line.from);
         addLinkDecorations(editorView, decorations, line.text, line.from);
-        addInlineTagDecorations(decorations, line.text, line.from);
+        addInlineTagDecorations(editorView, decorations, line.text, line.from);
         position = line.to + 1;
       }
     }
 
     return Decoration.set(decorations, true);
+  }
+
+  function addDividerMarkerDecorations(
+    editorView: EditorView,
+    decorations: Range<Decoration>[],
+    text: string,
+    lineFrom: number,
+    indentLength: number
+  ) {
+    const markerStart = lineFrom + indentLength;
+    const markerEnd = lineFrom + text.length;
+    if (isRangeBeingEdited(editorView, markerStart, markerEnd)) return;
+
+    decorations.push(Decoration.replace({}).range(markerStart, markerEnd));
+  }
+
+  function addHeadingMarkerDecorations(
+    editorView: EditorView,
+    decorations: Range<Decoration>[],
+    lineFrom: number,
+    heading: RegExpMatchArray
+  ) {
+    const markerStart = lineFrom + heading[1].length;
+    const markerEnd = markerStart + heading[2].length + heading[3].length;
+    if (isRangeBeingEdited(editorView, markerStart, markerEnd)) return;
+
+    decorations.push(Decoration.replace({}).range(markerStart, markerEnd));
+  }
+
+  function addEmphasisDecorations(
+    editorView: EditorView,
+    decorations: Range<Decoration>[],
+    text: string,
+    lineFrom: number
+  ) {
+    addDelimitedTextDecorations(editorView, decorations, text, lineFrom, /(^|[^*])\*\*([^\s*](?:[^*\n]*?[^\s*])?)\*\*(?!\*)/g, 2);
+    addDelimitedTextDecorations(editorView, decorations, text, lineFrom, /(^|[^*])\*([^\s*](?:[^*\n]*?[^\s*])?)\*(?!\*)/g, 1);
+  }
+
+  function addDelimitedTextDecorations(
+    editorView: EditorView,
+    decorations: Range<Decoration>[],
+    text: string,
+    lineFrom: number,
+    pattern: RegExp,
+    delimiterLength: number
+  ) {
+    for (const match of text.matchAll(pattern)) {
+      const prefixLength = match[1].length;
+      const content = match[2];
+      const openingStart = lineFrom + (match.index ?? 0) + prefixLength;
+      const openingEnd = openingStart + delimiterLength;
+      const closingStart = openingEnd + content.length;
+      const closingEnd = closingStart + delimiterLength;
+
+      if (isRangeBeingEdited(editorView, openingStart, closingEnd)) continue;
+
+      decorations.push(Decoration.replace({}).range(openingStart, openingEnd));
+      decorations.push(Decoration.replace({}).range(closingStart, closingEnd));
+    }
   }
 
   function addListDecorations(
@@ -389,6 +467,7 @@
   }
 
   function addInlineTagDecorations(
+    editorView: EditorView,
     decorations: Range<Decoration>[],
     text: string,
     lineFrom: number
@@ -404,7 +483,10 @@
       const tagEnd = tagStart + tag.length + 1;
       if (isMarkdownHeadingTag(text, prefixStart, prefix)) continue;
 
-      decorations.push(Decoration.mark({ class: 'cm-mdp-inline-tag' }).range(tagStart, tagEnd));
+      if (!isRangeBeingEdited(editorView, tagStart, tagEnd)) {
+        decorations.push(Decoration.replace({}).range(tagStart, tagStart + 1));
+      }
+      decorations.push(Decoration.mark({ class: 'cm-mdp-inline-tag' }).range(tagStart + 1, tagEnd));
     }
   }
 

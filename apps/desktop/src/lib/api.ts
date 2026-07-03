@@ -31,6 +31,10 @@ export function createBase(title?: string): Promise<NoteSummary> {
   return invoke('create_base', { input: { title: title || 'Untitled base' } });
 }
 
+export function renameBase(id: string, title: string): Promise<NoteSummary> {
+  return invoke('rename_base', { id, title });
+}
+
 export function listNotes(): Promise<NoteSummary[]> {
   return invoke('list_notes');
 }
@@ -49,6 +53,10 @@ export function saveNote(input: SaveNoteInput): Promise<{ note: NoteSummary }> {
 
 export function saveNoteSource(input: SaveNoteSourceInput): Promise<{ note: NoteSummary }> {
   return invoke('save_note_source', { input });
+}
+
+export function deleteNote(id: string): Promise<void> {
+  return invoke('delete_note', { id });
 }
 
 export async function selectWorkspaceDirectory(defaultPath?: string): Promise<string | null> {

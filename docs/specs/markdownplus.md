@@ -8,7 +8,7 @@ id: "018ff6e2-9f4b-7a64-b101-0e2fd6e32f20"
 title: "Example note"
 created_at: "2026-06-28T23:30:00Z"
 updated_at: "2026-06-28T23:30:00Z"
-tags: []
+tags: #Example
 aliases: []
 type: "note"
 ---
@@ -22,6 +22,9 @@ Required fields:
 - `title`
 - `created_at`
 - `updated_at`
+
+Tags are written as hashtag tokens, for example `tags: #Project` or `tags: #Project, #ClientWork`.
+They are not stored as Markdown links and are not stored as YAML arrays.
 
 ## Body Rendering Rules
 

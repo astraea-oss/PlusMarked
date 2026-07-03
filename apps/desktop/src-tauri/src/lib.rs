@@ -245,6 +245,17 @@ fn create_base(input: CreateBaseInput, state: State<'_, AppState>) -> Result<Not
 }
 
 #[tauri::command]
+fn rename_base(
+    id: String,
+    title: String,
+    state: State<'_, AppState>,
+) -> Result<NoteSummary, String> {
+    let guard = state.workspace.lock().map_err(lock_error)?;
+    let workspace = guard.as_ref().ok_or("open a workspace first")?;
+    workspace.rename_base(&id, &title).map_err(to_command_error)
+}
+
+#[tauri::command]
 fn list_notes(state: State<'_, AppState>) -> Result<Vec<NoteSummary>, String> {
     let guard = state.workspace.lock().map_err(lock_error)?;
     let workspace = guard.as_ref().ok_or("open a workspace first")?;
@@ -282,6 +293,13 @@ fn save_note_source(
     workspace.save_note_source(input).map_err(to_command_error)
 }
 
+#[tauri::command]
+fn delete_note(id: String, state: State<'_, AppState>) -> Result<(), String> {
+    let guard = state.workspace.lock().map_err(lock_error)?;
+    let workspace = guard.as_ref().ok_or("open a workspace first")?;
+    workspace.delete_note(&id).map_err(to_command_error)
+}
+
 pub fn run() {
     let portable_root = configure_portable_environment();
 
@@ -294,11 +312,13 @@ pub fn run() {
             open_workspace,
             create_note,
             create_base,
+            rename_base,
             list_notes,
             get_note,
             get_note_source,
             save_note,
-            save_note_source
+            save_note_source,
+            delete_note
         ])
         .run(tauri::generate_context!())
         .expect("error while running MarkdownPlus");

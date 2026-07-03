@@ -146,6 +146,17 @@ impl Database {
         Ok(path.map(PathBuf::from))
     }
 
+    pub fn delete_note(&self, id: &str) -> Result<()> {
+        let connection = self.connection()?;
+        connection.execute("delete from properties where note_id = ?1", params![id])?;
+        connection.execute(
+            "delete from links where source_id = ?1 or target_id = ?1",
+            params![id],
+        )?;
+        connection.execute("delete from notes where id = ?1", params![id])?;
+        Ok(())
+    }
+
     fn migrate(&self) -> Result<()> {
         let connection = self.connection()?;
         connection.execute_batch(
@@ -247,4 +258,3 @@ fn simple_hash(input: &str) -> String {
     input.hash(&mut hasher);
     format!("{:016x}", hasher.finish())
 }
-

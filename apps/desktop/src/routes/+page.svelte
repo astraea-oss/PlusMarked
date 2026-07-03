@@ -26,6 +26,7 @@
   import {
     createBase,
     createNote,
+    deleteNote,
     getAppSettings,
     getNoteSource,
     listNotes,
@@ -84,6 +85,11 @@
   type OutlineItem = {
     level: number;
     text: string;
+  };
+  type NoteContextMenu = {
+    note: NoteSummary;
+    x: number;
+    y: number;
   };
 
   const minLeftPanelWidth = 150;
@@ -176,6 +182,8 @@
   let browsing = false;
   let settingsOpen = false;
   let editorMode: EditorMode = 'live';
+  let noteContextMenu: NoteContextMenu | null = null;
+  let noteContextMenuElement: HTMLDivElement;
 
   $: selectedId = selectedNoteSource?.id;
   $: selectedDocument = notes.find((note) => note.id === selectedId) ?? null;
@@ -199,6 +207,9 @@
   );
 
   onMount(async () => {
+    window.addEventListener('pointerdown', handleGlobalPointerDown);
+    window.addEventListener('keydown', handleGlobalKeydown);
+
     const settings = await getAppSettings();
     applyPersistedSettings(settings);
 
@@ -222,6 +233,8 @@
     }
 
     removeToolPointerListeners();
+    window.removeEventListener('pointerdown', handleGlobalPointerDown);
+    window.removeEventListener('keydown', handleGlobalKeydown);
   });
 
   async function openCurrentWorkspace() {
@@ -261,6 +274,7 @@
   }
 
   async function createNewNote() {
+    closeNoteContextMenu();
     if (!(await flushPendingAutosave())) return;
 
     const note = await createNote('Untitled');
@@ -271,6 +285,7 @@
   }
 
   async function createNewBase() {
+    closeNoteContextMenu();
     if (!(await flushPendingAutosave())) return;
 
     const base = await createBase('Untitled base');
@@ -278,6 +293,101 @@
     editorMode = 'live';
     await selectNote(base.id);
     status = 'Created base.';
+  }
+
+  function openNoteContextMenu(event: MouseEvent, note: NoteSummary) {
+    event.preventDefault();
+    event.stopPropagation();
+
+    const menuWidth = 190;
+    const menuHeight = 194;
+    noteContextMenu = {
+      note,
+      x: Math.min(event.clientX, Math.max(0, window.innerWidth - menuWidth - 8)),
+      y: Math.min(event.clientY, Math.max(0, window.innerHeight - menuHeight - 8))
+    };
+  }
+
+  function closeNoteContextMenu() {
+    noteContextMenu = null;
+  }
+
+  function handleGlobalPointerDown(event: PointerEvent) {
+    if (!noteContextMenu) return;
+    if (event.target instanceof Node && noteContextMenuElement?.contains(event.target)) return;
+    closeNoteContextMenu();
+  }
+
+  function handleGlobalKeydown(event: KeyboardEvent) {
+    if (event.key === 'Escape') closeNoteContextMenu();
+  }
+
+  async function openContextMenuNote() {
+    const note = noteContextMenu?.note;
+    closeNoteContextMenu();
+    if (!note) return;
+
+    settingsOpen = false;
+    editorMode = 'live';
+    await selectNote(note.id);
+  }
+
+  async function copyContextMenuValue(value: string, label: string) {
+    closeNoteContextMenu();
+    try {
+      await navigator.clipboard.writeText(value);
+      status = `${label} copied.`;
+    } catch {
+      status = `Could not copy ${label.toLowerCase()}.`;
+    }
+  }
+
+  async function copyContextMenuPath() {
+    const note = noteContextMenu?.note;
+    if (!note) return;
+    await copyContextMenuValue(note.path, 'Path');
+  }
+
+  async function copyContextMenuId() {
+    const note = noteContextMenu?.note;
+    if (!note) return;
+    await copyContextMenuValue(note.id, 'ID');
+  }
+
+  async function deleteContextMenuNote() {
+    const note = noteContextMenu?.note;
+    closeNoteContextMenu();
+    if (!note) return;
+
+    const documentType = note.note_type === 'base' ? 'base' : 'note';
+    if (!window.confirm(`Delete ${documentType} "${note.title}"? This removes it from the workspace.`)) {
+      return;
+    }
+
+    try {
+      const wasSelected = selectedId === note.id;
+      const deletedIndex = notes.findIndex((candidate) => candidate.id === note.id);
+
+      if (wasSelected) {
+        clearAutosaveState();
+        selectedNoteSource = null;
+        noteSource = '';
+        liveBody = '';
+        propertyRows = [];
+      }
+
+      await deleteNote(note.id);
+      notes = await listNotes();
+
+      if (wasSelected && notes.length) {
+        const nextIndex = Math.min(Math.max(deletedIndex, 0), notes.length - 1);
+        await selectNote(notes[nextIndex].id);
+      }
+
+      status = `Deleted ${documentType}.`;
+    } catch (error) {
+      status = error instanceof Error ? error.message : String(error);
+    }
   }
 
   async function selectNote(id: string) {
@@ -477,7 +587,7 @@
         return match;
       }
 
-      return `${prefix}<span class="mdp-inline-tag">#${escapeHtml(tag)}</span>`;
+      return `${prefix}<span class="mdp-inline-tag">${escapeHtml(tag)}</span>`;
     });
   }
 
@@ -1191,7 +1301,13 @@
       return /^-?\d+(?:\.\d+)?$/.test(text) ? text : '0';
     }
 
-    if (type === 'tags' || type === 'list') {
+    if (type === 'tags') {
+      if (tokens.length) return sourceTagValueFromTokens(tokens.map((token) => normalizeTokenValue(type, token)));
+      if (text && text !== '[]') return sourceTagValueFromTokens([normalizeTokenValue(type, text)]);
+      return '[]';
+    }
+
+    if (type === 'list') {
       if (tokens.length) return sourceValueFromTokens(tokens.map((token) => normalizeTokenValue(type, token)));
       if (text && text !== '[]') return sourceValueFromTokens([normalizeTokenValue(type, text)]);
       return '[]';
@@ -1231,14 +1347,30 @@
     return `[${tokens.map(quoteYamlString).join(', ')}]`;
   }
 
+  function parseTagValue(value: string) {
+    return parseYamlArrayValue(value)
+      .flatMap((token) => token.split(/[\s,]+/))
+      .map((token) => normalizeTokenValue('tags', token))
+      .filter(Boolean);
+  }
+
+  function sourceTagValueFromTokens(tokens: string[]) {
+    const deduped = Array.from(new Set(tokens.map((token) => normalizeTokenValue('tags', token)).filter(Boolean)));
+    return deduped.length ? deduped.map((token) => `#${token}`).join(', ') : '[]';
+  }
+
   function propertyTokens(property: PropertyRow) {
-    return parseYamlArrayValue(property.value);
+    return propertyTypeFor(property) === 'tags' ? parseTagValue(property.value) : parseYamlArrayValue(property.value);
   }
 
   function updateTokenProperty(index: number, tokens: string[]) {
-    const deduped = Array.from(new Set(tokens.map((token) => token.trim()).filter(Boolean)));
+    const property = propertyRows[index];
+    const type = property ? propertyTypeFor(property) : 'list';
+    const deduped = Array.from(new Set(tokens.map((token) => normalizeTokenValue(type, token)).filter(Boolean)));
     propertyRows = propertyRows.map((property, propertyIndex) =>
-      propertyIndex === index ? { ...property, value: sourceValueFromTokens(deduped) } : property
+      propertyIndex === index
+        ? { ...property, value: type === 'tags' ? sourceTagValueFromTokens(deduped) : sourceValueFromTokens(deduped) }
+        : property
     );
     updateSourceFromLiveFields();
   }
@@ -1285,7 +1417,15 @@
     const current = currentSourceValue.trim();
     const wasQuoted = current.startsWith('"') && current.endsWith('"');
 
-    if (normalizedKey === 'tags' || normalizedKey === 'aliases') {
+    if (normalizedKey === 'tags') {
+      if (!trimmed || trimmed.toLowerCase() === 'none' || trimmed === '[]') {
+        return '[]';
+      }
+
+      return sourceTagValueFromTokens(trimmed.split(/[\s,]+/));
+    }
+
+    if (normalizedKey === 'aliases') {
       if (!trimmed || trimmed.toLowerCase() === 'none' || trimmed === '[]') {
         return '[]';
       }
@@ -1340,7 +1480,15 @@
       };
     }
 
-    if (normalizedKey === 'tags' || normalizedKey === 'aliases') {
+    if (normalizedKey === 'tags') {
+      const tags = parseTagValue(raw);
+      return {
+        text: tags.length ? tags.join(', ') : 'None',
+        formatted: true
+      };
+    }
+
+    if (normalizedKey === 'aliases') {
       if (raw === '[]') {
         return { text: 'None', formatted: true };
       }
@@ -1726,6 +1874,7 @@
                           editorMode = 'live';
                           selectNote(note.id);
                         }}
+                        on:contextmenu={(event) => openNoteContextMenu(event, note)}
                       >
                         {#if note.note_type === 'base'}
                           <Table size={13} />
@@ -1890,6 +2039,7 @@
       <BasesView
         {notes}
         baseTitle={selectedTitle}
+        baseId={selectedId}
         selectedId={selectedId}
         onOpenNote={(id) => {
           editorMode = 'live';
@@ -1990,7 +2140,7 @@
                       <div class="token-property-field" title={property.value}>
                         {#each tokens as token}
                           <span class="property-token">
-                            {#if propertyType === 'tags'}#{/if}{token}
+                            {token}
                             <button
                               type="button"
                               aria-label={`Remove ${token}`}
@@ -2141,6 +2291,27 @@
     </footer>
   </section>
 
+  {#if noteContextMenu}
+    <div
+      bind:this={noteContextMenuElement}
+      class="note-context-menu"
+      role="menu"
+      aria-label={`${noteContextMenu.note.title} actions`}
+      style={`left: ${noteContextMenu.x}px; top: ${noteContextMenu.y}px;`}
+    >
+      <button type="button" role="menuitem" on:click={openContextMenuNote}>Open</button>
+      <button type="button" role="menuitem" on:click={createNewNote}>New note</button>
+      <button type="button" role="menuitem" on:click={createNewBase}>New base</button>
+      <div class="context-menu-separator"></div>
+      <button type="button" role="menuitem" on:click={copyContextMenuPath}>Copy path</button>
+      <button type="button" role="menuitem" on:click={copyContextMenuId}>Copy ID</button>
+      <div class="context-menu-separator"></div>
+      <button class="danger" type="button" role="menuitem" on:click={deleteContextMenuNote}>
+        Delete {noteContextMenu.note.note_type === 'base' ? 'base' : 'note'}
+      </button>
+    </div>
+  {/if}
+
   <button
     class="panel-resize-handle right-resize-handle"
     type="button"
@@ -2271,6 +2442,7 @@
                           editorMode = 'live';
                           selectNote(note.id);
                         }}
+                        on:contextmenu={(event) => openNoteContextMenu(event, note)}
                       >
                         {#if note.note_type === 'base'}
                           <Table size={13} />
@@ -2969,6 +3141,52 @@
     font-size: 0.78rem;
     font-weight: 650;
     line-height: 1.15;
+  }
+
+  .note-context-menu {
+    position: fixed;
+    z-index: 80;
+    display: grid;
+    gap: 0.12rem;
+    min-width: 11.5rem;
+    border: 1px solid #303946;
+    border-radius: 6px;
+    background: #10161f;
+    box-shadow: 0 16px 36px rgba(0, 0, 0, 0.42);
+    padding: 0.28rem;
+  }
+
+  .note-context-menu button {
+    width: 100%;
+    border-color: transparent;
+    background: transparent;
+    padding: 0.34rem 0.44rem;
+    text-align: left;
+    color: #d7dde4;
+    font-size: 0.78rem;
+  }
+
+  .note-context-menu button:hover,
+  .note-context-menu button:focus {
+    border-color: transparent;
+    background: #1c232d;
+    outline: none;
+  }
+
+  .note-context-menu button.danger {
+    color: #ffb4a8;
+  }
+
+  .note-context-menu button.danger:hover,
+  .note-context-menu button.danger:focus {
+    background: rgba(248, 81, 73, 0.14);
+    color: #ffd2cb;
+  }
+
+  .context-menu-separator {
+    height: 1px;
+    margin: 0.16rem 0;
+    background: #232b36;
   }
 
   .editor {
