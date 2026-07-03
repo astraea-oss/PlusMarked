@@ -109,6 +109,17 @@
     type: string;
     apply?: string;
   };
+  type EmbeddedFilterRule = {
+    key: string;
+    operator: 'contains' | 'equals' | 'not-equals' | 'filled' | 'empty' | 'greater' | 'less';
+    value: string;
+  };
+  type EmbeddedBaseViewState = {
+    filterRules?: EmbeddedFilterRule[];
+    searchText?: string;
+    visibleColumnKeys?: string[];
+    limit?: number;
+  };
 
   const minLeftPanelWidth = 150;
   const maxLeftPanelWidth = 420;
@@ -1809,7 +1820,7 @@
 
     const note = notes.find((candidate) => candidate.id === noteId);
     if (note?.note_type === 'base') {
-      const documents = notes.filter((candidate) => candidate.note_type !== 'base');
+      const documents = embeddedBaseRowsFor(noteId);
       return {
         title: note.title ?? fallbackTitle,
         excerpt: `Base view · ${documents.length} document${documents.length === 1 ? '' : 's'}`,
@@ -1861,6 +1872,125 @@
     );
   }
 
+  function embeddedBaseRowsFor(baseId: string) {
+    const baseState = embeddedBaseViewState(baseId);
+    const documents = notes.filter((candidate) => candidate.note_type !== 'base');
+    const rows = documents.map((document) => ({
+      ...document,
+      properties: embeddedNoteProperties(document)
+    }));
+
+    const filtered = rows.filter((row) => {
+      const search = (baseState.searchText ?? '').trim().toLowerCase();
+      if (search) {
+        const keys = baseState.visibleColumnKeys?.length
+          ? baseState.visibleColumnKeys
+          : ['title', 'type', 'tags', 'aliases', 'created_at', 'updated_at'];
+        const haystack = keys.map((key) => embeddedPropertyValue(row, key)).join(' ').toLowerCase();
+        if (!haystack.includes(search)) return false;
+      }
+
+      return (baseState.filterRules ?? []).every((rule) => embeddedRowMatchesFilter(row, rule));
+    });
+
+    const limit = Number(baseState.limit);
+    return filtered.slice(0, Number.isFinite(limit) && limit > 0 ? limit : filtered.length);
+  }
+
+  function embeddedBaseViewState(baseId: string): EmbeddedBaseViewState {
+    const source = baseId === selectedId ? noteSource : embeddedNoteSources[baseId] ?? '';
+    const match = source.match(/^# @plusmarked-view-state (.+)$/m);
+    if (!match) return {};
+
+    try {
+      const parsed = JSON.parse(match[1]);
+      if (!parsed || typeof parsed !== 'object') return {};
+      return {
+        filterRules: sanitizeEmbeddedFilterRules((parsed as EmbeddedBaseViewState).filterRules),
+        searchText: typeof (parsed as EmbeddedBaseViewState).searchText === 'string'
+          ? (parsed as EmbeddedBaseViewState).searchText
+          : '',
+        visibleColumnKeys: Array.isArray((parsed as EmbeddedBaseViewState).visibleColumnKeys)
+          ? (parsed as EmbeddedBaseViewState).visibleColumnKeys?.map((key) => String(key)).filter(Boolean)
+          : [],
+        limit: Number((parsed as EmbeddedBaseViewState).limit)
+      };
+    } catch {
+      return {};
+    }
+  }
+
+  function sanitizeEmbeddedFilterRules(value: unknown): EmbeddedFilterRule[] {
+    const operators = new Set(['contains', 'equals', 'not-equals', 'filled', 'empty', 'greater', 'less']);
+    return Array.isArray(value)
+      ? value
+          .filter((rule) => rule && typeof rule === 'object')
+          .map((rule) => {
+            const candidate = rule as Record<string, unknown>;
+            const operator = String(candidate.operator);
+            return {
+              key: typeof candidate.key === 'string' ? candidate.key : '',
+              operator: operators.has(operator) ? operator as EmbeddedFilterRule['operator'] : 'contains',
+              value: typeof candidate.value === 'string' ? candidate.value : ''
+            };
+          })
+          .filter((rule) => rule.key)
+      : [];
+  }
+
+  function embeddedNoteProperties(note: NoteSummary) {
+    const source = note.id === selectedId ? noteSource : embeddedNoteSources[note.id] ?? '';
+    const split = splitMarkdownPlusSource(source);
+    return {
+      id: note.id,
+      title: note.title,
+      updated_at: note.updated_at,
+      type: note.note_type,
+      ...parseEmbeddedFrontmatter(split.frontmatter)
+    };
+  }
+
+  function parseEmbeddedFrontmatter(frontmatter: string) {
+    const properties: Record<string, string> = {};
+    for (const line of frontmatter.split(/\r?\n/)) {
+      const match = line.match(/^([A-Za-z0-9_-]+):\s*(.*)$/);
+      if (match) properties[match[1]] = match[2] ?? '';
+    }
+    return properties;
+  }
+
+  function embeddedRowMatchesFilter(
+    row: NoteSummary & { properties: Record<string, string> },
+    rule: EmbeddedFilterRule
+  ) {
+    const raw = embeddedPropertyValue(row, rule.key);
+    const value = raw.toLowerCase();
+    const needle = rule.value.trim().toLowerCase();
+
+    if (rule.operator === 'filled') return Boolean(raw.trim());
+    if (rule.operator === 'empty') return !raw.trim();
+    if (rule.operator === 'equals') return value === needle;
+    if (rule.operator === 'not-equals') return value !== needle;
+    if (rule.operator === 'greater') return numericValue(raw) > numericValue(rule.value);
+    if (rule.operator === 'less') return numericValue(raw) < numericValue(rule.value);
+    return value.includes(needle);
+  }
+
+  function embeddedPropertyValue(
+    row: NoteSummary & { properties: Record<string, string> },
+    key: string
+  ) {
+    const value = row.properties[key] ?? '';
+    if (key === 'tags') return parseTagValue(value).join(', ');
+    if (key === 'aliases') return parseYamlArrayValue(value).join(', ');
+    return unquoteYamlScalar(value);
+  }
+
+  function numericValue(value: string) {
+    const number = Number(String(value).replace(/,/g, '').trim());
+    return Number.isFinite(number) ? number : 0;
+  }
+
   function extractInternalEmbedTargets(source: string, _internalLinkSignature = '') {
     const targets = new Set<string>();
     for (const match of source.matchAll(/\[\[!([^\]\n]+)\]\]/g)) {
@@ -1872,7 +2002,12 @@
 
   async function loadEmbeddedNoteSources(targets: string[]) {
     const ids = Array.from(new Set(targets.map(resolveInternalLink).filter((id): id is string => Boolean(id))));
-    const missing = ids.filter((id) => !embeddedNoteSources[id] && id !== selectedId);
+    const embeddedBaseIds = ids.filter((id) => notes.find((note) => note.id === id)?.note_type === 'base');
+    const rowIds = embeddedBaseIds.length
+      ? notes.filter((note) => note.note_type !== 'base').map((note) => note.id)
+      : [];
+    const sourceIds = Array.from(new Set([...ids, ...rowIds]));
+    const missing = sourceIds.filter((id) => !embeddedNoteSources[id] && id !== selectedId);
     if (!missing.length) return;
 
     try {
