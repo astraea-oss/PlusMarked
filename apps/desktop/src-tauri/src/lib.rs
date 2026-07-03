@@ -4,8 +4,8 @@ use std::sync::Mutex;
 
 use mdp_core::NoteDocument;
 use mdp_workspace::{
-    CreateBaseInput, CreateNoteInput, NoteSource, NoteSummary, SaveNoteInput, SaveNoteSourceInput, SaveResult,
-    WorkspaceHandle, WorkspaceSummary,
+    CreateBaseInput, CreateCanvasInput, CreateNoteInput, NoteSource, NoteSummary, SaveNoteInput,
+    SaveNoteSourceInput, SaveResult, WorkspaceHandle, WorkspaceSummary,
 };
 use serde::{Deserialize, Serialize};
 use tauri::State;
@@ -245,6 +245,16 @@ fn create_base(input: CreateBaseInput, state: State<'_, AppState>) -> Result<Not
 }
 
 #[tauri::command]
+fn create_canvas(
+    input: CreateCanvasInput,
+    state: State<'_, AppState>,
+) -> Result<NoteSummary, String> {
+    let guard = state.workspace.lock().map_err(lock_error)?;
+    let workspace = guard.as_ref().ok_or("open a workspace first")?;
+    workspace.create_canvas(input).map_err(to_command_error)
+}
+
+#[tauri::command]
 fn rename_base(
     id: String,
     title: String,
@@ -312,6 +322,7 @@ pub fn run() {
             open_workspace,
             create_note,
             create_base,
+            create_canvas,
             rename_base,
             list_notes,
             get_note,

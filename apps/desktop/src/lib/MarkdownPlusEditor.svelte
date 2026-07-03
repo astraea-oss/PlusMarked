@@ -22,7 +22,7 @@
     title: string;
     excerpt: string;
     exists: boolean;
-    kind: 'note' | 'base' | 'missing';
+    kind: 'note' | 'base' | 'canvas' | 'missing';
     items?: string[];
   };
   type ExternalEmbedPreview = {

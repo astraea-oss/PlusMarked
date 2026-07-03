@@ -7,6 +7,7 @@
     FilePlus,
     FolderOpen,
     Hash,
+    LayoutDashboard,
     List,
     ListTree,
     NotebookText,
@@ -22,9 +23,11 @@
   import DOMPurify from 'dompurify';
   import { marked } from 'marked';
   import BasesView from '$lib/BasesView.svelte';
+  import CanvasView from '$lib/CanvasView.svelte';
   import MarkdownPlusEditor from '$lib/MarkdownPlusEditor.svelte';
   import {
     createBase,
+    createCanvas,
     createNote,
     deleteNote,
     getAppSettings,
@@ -95,7 +98,7 @@
     title: string;
     excerpt: string;
     exists: boolean;
-    kind: 'note' | 'base' | 'missing';
+    kind: 'note' | 'base' | 'canvas' | 'missing';
     items?: string[];
   };
   type ExternalEmbedPreview = {
@@ -215,11 +218,14 @@
   let noteContextMenuElement: HTMLDivElement;
   let embeddedNoteSources: Record<string, string> = {};
   let loadedEmbedTargetsSignature = '';
+  let canvasDocumentSources: Record<string, string> = {};
+  let loadedCanvasDocumentSignature = '';
 
   $: selectedId = selectedNoteSource?.id;
   $: selectedDocument = notes.find((note) => note.id === selectedId) ?? null;
   $: selectedTitle = selectedDocument?.title ?? 'Untitled';
   $: selectedIsBase = selectedDocument?.note_type === 'base';
+  $: selectedIsCanvas = selectedDocument?.note_type === 'canvas';
   $: internalLinkSignature = notes
     .map((note) => `${note.id}:${note.title}:${note.path}`)
     .join('|');
@@ -244,6 +250,12 @@
   $: embeddedSourceSignature = Object.entries(embeddedNoteSources)
     .map(([id, source]) => `${id}:${source.length}:${source.slice(0, 96)}`)
     .join('|');
+  $: canvasDocumentTargets = selectedIsCanvas ? extractCanvasDocumentTargets(noteSource, internalLinkSignature) : [];
+  $: canvasDocumentSignature = canvasDocumentTargets.join('|');
+  $: if (canvasDocumentSignature !== loadedCanvasDocumentSignature) {
+    loadedCanvasDocumentSignature = canvasDocumentSignature;
+    void loadCanvasDocumentSources(canvasDocumentTargets);
+  }
   $: markdownHtml = DOMPurify.sanitize(
     marked.parse(markdownPlusPreviewSource(markdownBody, internalLinkSignature, embeddedSourceSignature), {
       async: false,
@@ -352,12 +364,29 @@
     status = 'Created base.';
   }
 
+  async function createNewCanvas() {
+    closeNoteContextMenu();
+    if (!(await flushPendingAutosave())) return;
+
+    const canvas = await createCanvas('Untitled canvas');
+    notes = await listNotes();
+    editorMode = 'live';
+    await selectNote(canvas.id);
+    status = 'Created canvas.';
+  }
+
+  function documentTypeLabel(note: NoteSummary) {
+    if (note.note_type === 'base') return 'base';
+    if (note.note_type === 'canvas') return 'canvas';
+    return 'note';
+  }
+
   function openNoteContextMenu(event: MouseEvent, note: NoteSummary) {
     event.preventDefault();
     event.stopPropagation();
 
     const menuWidth = 190;
-    const menuHeight = 194;
+    const menuHeight = 226;
     noteContextMenu = {
       note,
       x: Math.min(event.clientX, Math.max(0, window.innerWidth - menuWidth - 8)),
@@ -416,7 +445,7 @@
     closeNoteContextMenu();
     if (!note) return;
 
-    const documentType = note.note_type === 'base' ? 'base' : 'note';
+    const documentType = documentTypeLabel(note);
     if (!window.confirm(`Delete ${documentType} "${note.title}"? This removes it from the workspace.`)) {
       return;
     }
@@ -457,10 +486,20 @@
     noteSource = selectedNoteSource.source;
     lastSavedNoteId = id;
     lastSavedSource = noteSource;
-    if (notes.find((note) => note.id === id)?.note_type === 'base') {
+    const selectedType = notes.find((note) => note.id === id)?.note_type;
+    if (selectedType === 'base') {
       liveBody = '';
       propertyRows = [];
       status = 'Base loaded.';
+      return;
+    }
+    if (selectedType === 'canvas') {
+      liveBody = '';
+      propertyRows = [];
+      status = 'Loading canvas documents...';
+      if (await loadCanvasDocumentSources(extractCanvasDocumentTargets(noteSource, internalLinkSignature))) {
+        status = 'Canvas loaded.';
+      }
       return;
     }
 
@@ -477,7 +516,7 @@
       return saveSelectedNote(force);
     }
 
-    if (editorMode === 'live') {
+    if (!selectedIsCanvas && editorMode === 'live') {
       updateSourceFromLiveFields(false);
     }
 
@@ -1285,6 +1324,14 @@
     updateSourceFromLiveFields();
   }
 
+  function updateCanvasSource(value: string) {
+    noteSource = value;
+    if (selectedNoteSource) {
+      selectedNoteSource = { ...selectedNoteSource, source: value };
+    }
+    scheduleAutosave();
+  }
+
   function isSystemProperty(key: string) {
     return Object.prototype.hasOwnProperty.call(systemPropertyLabels, key.trim());
   }
@@ -1830,6 +1877,17 @@
       };
     }
 
+    if (note?.note_type === 'canvas') {
+      const source = noteId === selectedId ? noteSource : embeddedNoteSources[noteId];
+      const summary = canvasSourceSummary(source);
+      return {
+        title: note.title ?? fallbackTitle,
+        excerpt: source ? `Canvas · ${summary.nodes} nodes · ${summary.edges} edges` : 'Canvas',
+        exists: true,
+        kind: 'canvas'
+      };
+    }
+
     const source = noteId === selectedId ? noteSource : embeddedNoteSources[noteId];
     return {
       title: note?.title ?? fallbackTitle,
@@ -1859,11 +1917,12 @@
       if (!label || seen.has(normalized)) continue;
 
       seen.add(normalized);
+      const documentType = documentTypeLabel(item);
       completions.push({
         label,
         apply: label,
-        type: item.note_type === 'base' ? 'class' : 'text',
-        detail: item.note_type === 'base' ? 'base' : 'note'
+        type: item.note_type === 'base' || item.note_type === 'canvas' ? 'class' : 'text',
+        detail: documentType
       });
     }
 
@@ -1874,7 +1933,7 @@
 
   function embeddedBaseRowsFor(baseId: string) {
     const baseState = embeddedBaseViewState(baseId);
-    const documents = notes.filter((candidate) => candidate.note_type !== 'base');
+    const documents = notes.filter((candidate) => candidate.note_type === 'note');
     const rows = documents.map((document) => ({
       ...document,
       properties: embeddedNoteProperties(document)
@@ -1991,6 +2050,18 @@
     return Number.isFinite(number) ? number : 0;
   }
 
+  function canvasSourceSummary(source: string) {
+    try {
+      const parsed = JSON.parse(source) as { nodes?: unknown[]; edges?: unknown[] };
+      return {
+        nodes: Array.isArray(parsed.nodes) ? parsed.nodes.length : 0,
+        edges: Array.isArray(parsed.edges) ? parsed.edges.length : 0
+      };
+    } catch {
+      return { nodes: 0, edges: 0 };
+    }
+  }
+
   function extractInternalEmbedTargets(source: string, _internalLinkSignature = '') {
     const targets = new Set<string>();
     for (const match of source.matchAll(/\[\[!([^\]\n]+)\]\]/g)) {
@@ -2004,7 +2075,7 @@
     const ids = Array.from(new Set(targets.map(resolveInternalLink).filter((id): id is string => Boolean(id))));
     const embeddedBaseIds = ids.filter((id) => notes.find((note) => note.id === id)?.note_type === 'base');
     const rowIds = embeddedBaseIds.length
-      ? notes.filter((note) => note.note_type !== 'base').map((note) => note.id)
+      ? notes.filter((note) => note.note_type === 'note').map((note) => note.id)
       : [];
     const sourceIds = Array.from(new Set([...ids, ...rowIds]));
     const missing = sourceIds.filter((id) => !embeddedNoteSources[id] && id !== selectedId);
@@ -2018,6 +2089,47 @@
       };
     } catch (error) {
       status = error instanceof Error ? error.message : String(error);
+    }
+  }
+
+  function extractCanvasDocumentTargets(canvasSource: string, _internalLinkSignature = '') {
+    try {
+      const parsed = JSON.parse(canvasSource) as { nodes?: Array<{ type?: unknown; file?: unknown }> };
+      const files = Array.isArray(parsed.nodes)
+        ? parsed.nodes
+            .filter((node) => node?.type === 'file' && typeof node.file === 'string')
+            .map((node) => String(node.file))
+        : [];
+      return Array.from(new Set(files.map(resolveCanvasFileTarget).filter((id): id is string => Boolean(id)))).sort();
+    } catch {
+      return [];
+    }
+  }
+
+  function resolveCanvasFileTarget(file: string) {
+    const normalized = normalizeFilenameStem(notePathStem(file));
+    if (!normalized) return null;
+    return notes.find((note) =>
+      normalizeFilenameStem(note.title) === normalized
+      || normalizeFilenameStem(notePathStem(note.path)) === normalized
+      || normalizeFilenameStem(note.path.split(/[\\/]/).pop() ?? note.path) === normalized
+    )?.id ?? null;
+  }
+
+  async function loadCanvasDocumentSources(ids: string[]): Promise<boolean> {
+    const missing = ids.filter((id) => !canvasDocumentSources[id] && id !== selectedId);
+    if (!missing.length) return true;
+
+    try {
+      const loaded = await Promise.all(missing.map(async (id) => [id, (await getNoteSource(id)).source] as const));
+      canvasDocumentSources = {
+        ...canvasDocumentSources,
+        ...Object.fromEntries(loaded)
+      };
+      return true;
+    } catch (error) {
+      status = error instanceof Error ? error.message : String(error);
+      return false;
     }
   }
 
@@ -2041,7 +2153,7 @@
       .split('#')[0]
       .split('/')
       .pop()
-      ?.replace(/\.(md|mdp|base)$/i, '')
+      ?.replace(/\.(md|mdp|base|canvas)$/i, '')
       .trim() ?? '';
 
     return normalized.replace(/^`(.+)`$/, '$1').trim();
@@ -2052,7 +2164,7 @@
       .replace(/\\/g, '/')
       .split('/')
       .pop()
-      ?.replace(/\.(md|mdp|base)$/i, '')
+      ?.replace(/\.(md|mdp|base|canvas)$/i, '')
       .trim() ?? '';
   }
 
@@ -2265,6 +2377,7 @@
                 <div class="compact-actions">
                   <button class="compact-action" disabled={!workspace} on:click={createNewNote}>New</button>
                   <button class="compact-action" disabled={!workspace} on:click={createNewBase}>Base</button>
+                  <button class="compact-action" disabled={!workspace} on:click={createNewCanvas}>Canvas</button>
                 </div>
               {/if}
             </div>
@@ -2286,6 +2399,8 @@
                       >
                         {#if note.note_type === 'base'}
                           <Table size={13} />
+                        {:else if note.note_type === 'canvas'}
+                          <LayoutDashboard size={13} />
                         {:else}
                           <NotebookText size={13} />
                         {/if}
@@ -2443,6 +2558,23 @@
           </section>
         </div>
       </div>
+    {:else if selectedNoteSource && selectedIsCanvas}
+      <CanvasView
+        source={noteSource}
+        {notes}
+        documentSources={{ ...canvasDocumentSources, ...(selectedId ? { [selectedId]: noteSource } : {}) }}
+        onChange={updateCanvasSource}
+        onOpenNote={(id) => {
+          editorMode = 'live';
+          void selectNote(id);
+        }}
+        onNotesChanged={(updatedNotes) => {
+          notes = updatedNotes;
+        }}
+        setStatus={(message) => {
+          status = message;
+        }}
+      />
     {:else if selectedNoteSource && selectedIsBase}
       <BasesView
         {notes}
@@ -2670,7 +2802,7 @@
 
     <footer>
       <span>{status}</span>
-      {#if selectedNoteSource && !selectedIsBase && !settingsOpen}
+      {#if selectedNoteSource && !selectedIsBase && !selectedIsCanvas && !settingsOpen}
         <div class="mode-group" aria-label="Note view">
           <button
             class:active={editorMode === 'live'}
@@ -2716,12 +2848,13 @@
       <button type="button" role="menuitem" on:click={openContextMenuNote}>Open</button>
       <button type="button" role="menuitem" on:click={createNewNote}>New note</button>
       <button type="button" role="menuitem" on:click={createNewBase}>New base</button>
+      <button type="button" role="menuitem" on:click={createNewCanvas}>New canvas</button>
       <div class="context-menu-separator"></div>
       <button type="button" role="menuitem" on:click={copyContextMenuPath}>Copy path</button>
       <button type="button" role="menuitem" on:click={copyContextMenuId}>Copy ID</button>
       <div class="context-menu-separator"></div>
       <button class="danger" type="button" role="menuitem" on:click={deleteContextMenuNote}>
-        Delete {noteContextMenu.note.note_type === 'base' ? 'base' : 'note'}
+        Delete {documentTypeLabel(noteContextMenu.note)}
       </button>
     </div>
   {/if}
@@ -2839,6 +2972,7 @@
                 <div class="compact-actions">
                   <button class="compact-action" disabled={!workspace} on:click={createNewNote}>New</button>
                   <button class="compact-action" disabled={!workspace} on:click={createNewBase}>Base</button>
+                  <button class="compact-action" disabled={!workspace} on:click={createNewCanvas}>Canvas</button>
                 </div>
               {/if}
             </div>
@@ -2860,6 +2994,8 @@
                       >
                         {#if note.note_type === 'base'}
                           <Table size={13} />
+                        {:else if note.note_type === 'canvas'}
+                          <LayoutDashboard size={13} />
                         {:else}
                           <NotebookText size={13} />
                         {/if}

@@ -31,6 +31,10 @@ export function createBase(title?: string): Promise<NoteSummary> {
   return invoke('create_base', { input: { title: title || 'Untitled base' } });
 }
 
+export function createCanvas(title?: string): Promise<NoteSummary> {
+  return invoke('create_canvas', { input: { title: title || 'Untitled canvas' } });
+}
+
 export function renameBase(id: string, title: string): Promise<NoteSummary> {
   return invoke('rename_base', { id, title });
 }

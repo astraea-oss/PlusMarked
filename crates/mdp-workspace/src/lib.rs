@@ -33,6 +33,11 @@ pub struct CreateBaseInput {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateCanvasInput {
+    pub title: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SaveNoteInput {
     pub id: String,
     pub title: String,
@@ -64,6 +69,7 @@ impl WorkspaceHandle {
         let root = normalize_workspace_root(root.as_ref())?;
         fs::create_dir_all(root.join("notes")).context("creating notes directory")?;
         fs::create_dir_all(root.join("bases")).context("creating bases directory")?;
+        fs::create_dir_all(root.join("canvases")).context("creating canvases directory")?;
         fs::create_dir_all(root.join(".local")).context("creating local metadata directory")?;
 
         let workspace_config = root.join("workspace.toml");
@@ -107,6 +113,13 @@ impl WorkspaceHandle {
         self.base_summary_for_path(&path)
     }
 
+    pub fn create_canvas(&self, input: CreateCanvasInput) -> Result<NoteSummary> {
+        let title = input.title.unwrap_or_else(|| "Untitled canvas".to_string());
+        let path = self.canvas_path_for_title(&title, None)?;
+        write_source_atomic(&path, default_canvas_source())?;
+        self.canvas_summary_for_path(&path)
+    }
+
     pub fn rename_base(&self, id: &str, title: &str) -> Result<NoteSummary> {
         let path = self
             .base_path_from_id(id)?
@@ -132,6 +145,7 @@ impl WorkspaceHandle {
     pub fn list_notes(&self) -> Result<Vec<NoteSummary>> {
         let mut documents = self.database.list_notes()?;
         documents.extend(self.list_bases()?);
+        documents.extend(self.list_canvases()?);
         documents.sort_by(|left, right| {
             right
                 .updated_at
@@ -162,6 +176,16 @@ impl WorkspaceHandle {
             });
         }
 
+        if let Some(path) = self.canvas_path_from_id(id)? {
+            let source = fs::read_to_string(&path)
+                .with_context(|| format!("reading canvas {}", path.to_string_lossy()))?;
+
+            return Ok(NoteSource {
+                id: id.to_string(),
+                source,
+            });
+        }
+
         let path = self
             .database
             .note_path(id)?
@@ -185,7 +209,9 @@ impl WorkspaceHandle {
             input.aliases,
             input.body,
         );
-        let previous_path = self.database.note_path(&document.frontmatter.id.to_string())?;
+        let previous_path = self
+            .database
+            .note_path(&document.frontmatter.id.to_string())?;
         let path = self.note_path_for_document(&document, previous_path.as_deref())?;
         write_document_atomic(&path, &document)?;
         remove_replaced_note_file(previous_path.as_deref(), &path)?;
@@ -201,6 +227,13 @@ impl WorkspaceHandle {
             write_source_atomic(&path, &input.source)?;
             return Ok(SaveResult {
                 note: self.base_summary_for_path(&path)?,
+            });
+        }
+
+        if let Some(path) = self.canvas_path_from_id(&input.id)? {
+            write_source_atomic(&path, &input.source)?;
+            return Ok(SaveResult {
+                note: self.canvas_summary_for_path(&path)?,
             });
         }
 
@@ -233,6 +266,16 @@ impl WorkspaceHandle {
 
             fs::remove_file(&path)
                 .with_context(|| format!("deleting base {}", path.to_string_lossy()))?;
+            return Ok(());
+        }
+
+        if let Some(path) = self.canvas_path_from_id(id)? {
+            if !path.exists() {
+                return Err(anyhow!("canvas not found: {id}"));
+            }
+
+            fs::remove_file(&path)
+                .with_context(|| format!("deleting canvas {}", path.to_string_lossy()))?;
             return Ok(());
         }
 
@@ -302,6 +345,22 @@ impl WorkspaceHandle {
         Ok(bases)
     }
 
+    fn list_canvases(&self) -> Result<Vec<NoteSummary>> {
+        let canvases_dir = self.root.join("canvases");
+        let mut canvases = Vec::new();
+        for entry in fs::read_dir(&canvases_dir).context("reading canvases directory")? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.extension().and_then(|extension| extension.to_str()) != Some("canvas") {
+                continue;
+            }
+
+            canvases.push(self.canvas_summary_for_path(&path)?);
+        }
+
+        Ok(canvases)
+    }
+
     fn base_summary_for_path(&self, path: &Path) -> Result<NoteSummary> {
         let title = path
             .file_stem()
@@ -326,8 +385,52 @@ impl WorkspaceHandle {
     fn base_id_for_path(&self, path: &Path) -> Result<String> {
         let relative = path
             .strip_prefix(self.root.join("bases"))
-            .with_context(|| format!("base path is outside bases directory: {}", path.to_string_lossy()))?;
-        Ok(format!("base:{}", relative.to_string_lossy().replace('\\', "/")))
+            .with_context(|| {
+                format!(
+                    "base path is outside bases directory: {}",
+                    path.to_string_lossy()
+                )
+            })?;
+        Ok(format!(
+            "base:{}",
+            relative.to_string_lossy().replace('\\', "/")
+        ))
+    }
+
+    fn canvas_summary_for_path(&self, path: &Path) -> Result<NoteSummary> {
+        let title = path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .unwrap_or("Untitled canvas")
+            .to_string();
+        let modified = fs::metadata(path)
+            .and_then(|metadata| metadata.modified())
+            .ok()
+            .map(DateTime::<Utc>::from)
+            .unwrap_or_else(Utc::now);
+
+        Ok(NoteSummary {
+            id: self.canvas_id_for_path(path)?,
+            title,
+            note_type: "canvas".to_string(),
+            updated_at: modified.to_rfc3339(),
+            path: path.to_string_lossy().to_string(),
+        })
+    }
+
+    fn canvas_id_for_path(&self, path: &Path) -> Result<String> {
+        let relative = path
+            .strip_prefix(self.root.join("canvases"))
+            .with_context(|| {
+                format!(
+                    "canvas path is outside canvases directory: {}",
+                    path.to_string_lossy()
+                )
+            })?;
+        Ok(format!(
+            "canvas:{}",
+            relative.to_string_lossy().replace('\\', "/")
+        ))
     }
 
     fn base_path_from_id(&self, id: &str) -> Result<Option<PathBuf>> {
@@ -339,9 +442,32 @@ impl WorkspaceHandle {
             return Err(anyhow!("invalid base id: {id}"));
         }
 
-        let path = self.root.join("bases").join(relative.replace('/', std::path::MAIN_SEPARATOR_STR));
+        let path = self
+            .root
+            .join("bases")
+            .join(relative.replace('/', std::path::MAIN_SEPARATOR_STR));
         if path.extension().and_then(|extension| extension.to_str()) != Some("base") {
             return Err(anyhow!("invalid base id: {id}"));
+        }
+
+        Ok(Some(path))
+    }
+
+    fn canvas_path_from_id(&self, id: &str) -> Result<Option<PathBuf>> {
+        let Some(relative) = id.strip_prefix("canvas:") else {
+            return Ok(None);
+        };
+
+        if relative.contains("..") || relative.starts_with('/') || relative.starts_with('\\') {
+            return Err(anyhow!("invalid canvas id: {id}"));
+        }
+
+        let path = self
+            .root
+            .join("canvases")
+            .join(relative.replace('/', std::path::MAIN_SEPARATOR_STR));
+        if path.extension().and_then(|extension| extension.to_str()) != Some("canvas") {
+            return Err(anyhow!("invalid canvas id: {id}"));
         }
 
         Ok(Some(path))
@@ -365,7 +491,29 @@ impl WorkspaceHandle {
         unreachable!("unbounded base filename suffix loop should always return");
     }
 
+    fn canvas_path_for_title(&self, title: &str, current_path: Option<&Path>) -> Result<PathBuf> {
+        let canvases_dir = self.root.join("canvases");
+        let title_slug = filename_stem_from_title(title);
+        let preferred = canvases_dir.join(format!("{title_slug}.canvas"));
+        if self.can_use_canvas_path(&preferred, current_path) {
+            return Ok(preferred);
+        }
+
+        for index in 2.. {
+            let candidate = canvases_dir.join(format!("{title_slug} {index}.canvas"));
+            if self.can_use_canvas_path(&candidate, current_path) {
+                return Ok(candidate);
+            }
+        }
+
+        unreachable!("unbounded canvas filename suffix loop should always return");
+    }
+
     fn can_use_base_path(&self, candidate: &Path, current_path: Option<&Path>) -> bool {
+        paths_equal(candidate, current_path) || !candidate.exists()
+    }
+
+    fn can_use_canvas_path(&self, candidate: &Path, current_path: Option<&Path>) -> bool {
         paths_equal(candidate, current_path) || !candidate.exists()
     }
 
@@ -454,12 +602,20 @@ views:
     )
 }
 
+fn default_canvas_source() -> &'static str {
+    "{\n  \"nodes\": [],\n  \"edges\": []\n}\n"
+}
+
 fn filename_stem_from_title(title: &str) -> String {
     let mut sanitized = String::with_capacity(title.len());
     let mut previous_was_space = false;
 
     for character in title.trim().chars() {
-        let replacement = if character.is_control() || matches!(character, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*') {
+        let replacement = if character.is_control()
+            || matches!(
+                character,
+                '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*'
+            ) {
             ' '
         } else {
             character
@@ -476,7 +632,11 @@ fn filename_stem_from_title(title: &str) -> String {
         }
     }
 
-    let sanitized = sanitized.trim_matches([' ', '.']).chars().take(96).collect::<String>();
+    let sanitized = sanitized
+        .trim_matches([' ', '.'])
+        .chars()
+        .take(96)
+        .collect::<String>();
     let sanitized = sanitized.trim_matches([' ', '.']).to_string();
     let fallback = if sanitized.is_empty() {
         "Untitled".to_string()
@@ -496,7 +656,9 @@ fn is_reserved_windows_filename(stem: &str) -> bool {
     matches!(uppercase.as_str(), "CON" | "PRN" | "AUX" | "NUL")
         || (uppercase.len() == 4
             && (uppercase.starts_with("COM") || uppercase.starts_with("LPT"))
-            && uppercase[3..].chars().all(|character| matches!(character, '1'..='9')))
+            && uppercase[3..]
+                .chars()
+                .all(|character| matches!(character, '1'..='9')))
 }
 
 fn paths_equal(left: &Path, right: Option<&Path>) -> bool {
@@ -514,8 +676,9 @@ fn remove_replaced_note_file(previous_path: Option<&Path>, next_path: &Path) -> 
     };
 
     if !paths_equal(next_path, Some(previous_path)) && previous_path.exists() {
-        fs::remove_file(previous_path)
-            .with_context(|| format!("removing replaced note {}", previous_path.to_string_lossy()))?;
+        fs::remove_file(previous_path).with_context(|| {
+            format!("removing replaced note {}", previous_path.to_string_lossy())
+        })?;
     }
 
     Ok(())
@@ -581,6 +744,7 @@ mod tests {
         assert_eq!(summary.root, expected_root.to_string_lossy().to_string());
         assert!(expected_root.join("notes").is_dir());
         assert!(expected_root.join("bases").is_dir());
+        assert!(expected_root.join("canvases").is_dir());
         assert!(expected_root.join(".local").join("index.sqlite").is_file());
 
         let note = workspace.create_note(CreateNoteInput {
@@ -610,7 +774,10 @@ mod tests {
         })?;
         let original_path = workspace.database.note_path(&note.id)?.unwrap();
 
-        assert_eq!(original_path.file_name().and_then(|name| name.to_str()), Some("Testing Note.mdp"));
+        assert_eq!(
+            original_path.file_name().and_then(|name| name.to_str()),
+            Some("Testing Note.mdp")
+        );
 
         let source = workspace
             .get_note_source(&note.id)?
@@ -622,7 +789,10 @@ mod tests {
         })?;
         let renamed_path = PathBuf::from(saved.note.path);
 
-        assert_eq!(renamed_path.file_name().and_then(|name| name.to_str()), Some("Human Title.mdp"));
+        assert_eq!(
+            renamed_path.file_name().and_then(|name| name.to_str()),
+            Some("Human Title.mdp")
+        );
         assert!(renamed_path.exists());
         assert!(!original_path.exists());
 
@@ -645,12 +815,17 @@ mod tests {
         let first_path = workspace.database.note_path(&first.id)?.unwrap();
         let second_path = workspace.database.note_path(&second.id)?.unwrap();
 
-        assert_eq!(first_path.file_name().and_then(|name| name.to_str()), Some("Same Title.mdp"));
+        assert_eq!(
+            first_path.file_name().and_then(|name| name.to_str()),
+            Some("Same Title.mdp")
+        );
         assert_ne!(first_path, second_path);
-        assert!(second_path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .is_some_and(|name| name.starts_with("Same Title - ") && name.ends_with(".mdp")));
+        assert!(
+            second_path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("Same Title - ") && name.ends_with(".mdp"))
+        );
 
         Ok(())
     }
@@ -724,6 +899,41 @@ mod tests {
     }
 
     #[test]
+    fn create_canvas_writes_json_canvas_file() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let workspace = WorkspaceHandle::open(temp.path())?;
+        let canvas = workspace.create_canvas(CreateCanvasInput {
+            title: Some("Story Map".to_string()),
+        })?;
+        let path = PathBuf::from(&canvas.path);
+
+        assert_eq!(canvas.note_type, "canvas");
+        assert!(canvas.id.starts_with("canvas:"));
+        assert_eq!(
+            path.file_name().and_then(|name| name.to_str()),
+            Some("Story Map.canvas")
+        );
+        assert_eq!(fs::read_to_string(path)?, default_canvas_source());
+        Ok(())
+    }
+
+    #[test]
+    fn delete_note_removes_canvas_file() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let workspace = WorkspaceHandle::open(temp.path())?;
+        let canvas = workspace.create_canvas(CreateCanvasInput {
+            title: Some("Delete Canvas".to_string()),
+        })?;
+        let path = PathBuf::from(&canvas.path);
+
+        workspace.delete_note(&canvas.id)?;
+
+        assert!(!path.exists());
+        assert!(workspace.list_notes()?.is_empty());
+        Ok(())
+    }
+
+    #[test]
     fn rename_base_updates_path_and_summary_id() -> Result<()> {
         let temp = tempfile::tempdir()?;
         let workspace = WorkspaceHandle::open(temp.path())?;
@@ -738,7 +948,9 @@ mod tests {
         assert_ne!(renamed.id, base.id);
         assert!(!original_path.exists());
         assert_eq!(
-            PathBuf::from(&renamed.path).file_name().and_then(|name| name.to_str()),
+            PathBuf::from(&renamed.path)
+                .file_name()
+                .and_then(|name| name.to_str()),
             Some("Renamed Base.base")
         );
         Ok(())
