@@ -22,10 +22,13 @@
   export let onChange: (value: string) => void = () => {};
   export let onInternalLink: (target: string) => void = () => {};
   export let onExternalLink: (target: string) => void = () => {};
+  export let internalLinkExists: (target: string) => boolean = () => true;
+  export let internalLinkSignature = '';
 
   let host: HTMLDivElement;
   let view: EditorView | null = null;
   let editorValue = '';
+  let lastInternalLinkSignature = '';
   const enclosingPairs: Record<string, string> = {
     '(': ')',
     '[': ']',
@@ -144,9 +147,17 @@
         color: '#8bd5bd',
         textDecoration: 'none'
       },
+      '.cm-mdp-missing-internal-link': {
+        backgroundColor: 'rgba(91, 117, 111, 0.12)',
+        color: '#85a79d'
+      },
       '.cm-mdp-internal-link:hover, .cm-mdp-external-link:hover': {
         backgroundColor: 'rgba(79, 189, 160, 0.16)',
         color: '#c4f5e5'
+      },
+      '.cm-mdp-missing-internal-link:hover': {
+        backgroundColor: 'rgba(91, 117, 111, 0.2)',
+        color: '#a2c2b8'
       },
       '.cm-mdp-editing-link': {
         color: '#4fbda0',
@@ -261,6 +272,11 @@
         insert: value
       }
     });
+  }
+
+  $: if (view && internalLinkSignature !== lastInternalLinkSignature) {
+    lastInternalLinkSignature = internalLinkSignature;
+    view.dispatch({ selection: view.state.selection });
   }
 
   onDestroy(() => {
@@ -429,7 +445,7 @@
       decorations.push(Decoration.replace({}).range(matchStart, visibleStart));
       decorations.push(
         Decoration.mark({
-          class: 'cm-mdp-link cm-mdp-internal-link',
+          class: `cm-mdp-link cm-mdp-internal-link${internalLinkExists(target) ? '' : ' cm-mdp-missing-internal-link'}`,
           attributes: {
             'data-mdp-internal-link': target,
             title: target

@@ -189,6 +189,10 @@
   $: selectedDocument = notes.find((note) => note.id === selectedId) ?? null;
   $: selectedTitle = selectedDocument?.title ?? 'Untitled';
   $: selectedIsBase = selectedDocument?.note_type === 'base';
+  $: internalLinkSignature = notes
+    .filter((note) => note.note_type !== 'base')
+    .map((note) => `${note.id}:${note.title}:${note.path}`)
+    .join('|');
   $: leftPanelColumnWidth = leftPanelMode === 'ribbon' ? ribbonPanelWidth : leftPanelWidth;
   $: rightPanelColumnWidth = rightPanelMode === 'ribbon' ? ribbonPanelWidth : rightPanelWidth;
   $: ribbonTools = buildRibbonTools(toolDocks, toolAnchors, toolOrders);
@@ -200,7 +204,7 @@
   $: rightHasHudTool = hasHudTool(rightRibbonTools);
   $: outlineItems = extractOutline(extractMarkdownBody(noteSource));
   $: markdownHtml = DOMPurify.sanitize(
-    marked.parse(markdownPlusPreviewSource(extractMarkdownBody(noteSource)), {
+    marked.parse(markdownPlusPreviewSource(extractMarkdownBody(noteSource), internalLinkSignature), {
       async: false,
       breaks: true
     }) as string
@@ -536,7 +540,7 @@
     return source.slice(delimiter + 4).replace(/^\r?\n+/, '');
   }
 
-  function markdownPlusPreviewSource(source: string): string {
+  function markdownPlusPreviewSource(source: string, _internalLinkSignature = ''): string {
     return preserveMarkdownBlankLines(renderInlineTags(renderWikiLinks(source)))
       .replace(/^[ \t]*-{3,}[ \t]*$/gm, '\n<hr data-mdp-rule="underline">\n');
   }
@@ -568,7 +572,8 @@
       const label = (rawLabel ?? rawTarget).trim();
       if (!target) return _match;
 
-      return `<a href="#${encodeURIComponent(target)}" class="mdp-internal-link" data-mdp-internal-link="${escapeHtml(target)}">${escapeHtml(label)}</a>`;
+      const missingClass = internalLinkExists(target) ? '' : ' mdp-missing-internal-link';
+      return `<a href="#${encodeURIComponent(target)}" class="mdp-internal-link${missingClass}" data-mdp-internal-link="${escapeHtml(target)}">${escapeHtml(label)}</a>`;
     });
   }
 
@@ -1672,13 +1677,21 @@
 
   async function openInternalLinkTarget(target: string) {
     const noteId = resolveInternalLink(target);
-    if (!noteId) {
-      status = `No note found for ${target}.`;
+    if (noteId) {
+      editorMode = 'live';
+      await selectNote(noteId);
       return;
     }
 
+    const title = titleForInternalLinkTarget(target);
+    if (!title) return;
+
+    if (!(await flushPendingAutosave())) return;
+    const note = await createNote(title);
+    notes = await listNotes();
     editorMode = 'live';
-    await selectNote(noteId);
+    await selectNote(note.id);
+    status = `Created ${title}.`;
   }
 
   function openExternalLinkTarget(target: string) {
@@ -1697,15 +1710,27 @@
     )?.id ?? null;
   }
 
-  function normalizeInternalLinkTarget(target: string) {
-    return target
+  function internalLinkExists(target: string) {
+    return Boolean(resolveInternalLink(target));
+  }
+
+  function titleForInternalLinkTarget(target: string) {
+    const normalized = target
       .trim()
       .replace(/\\/g, '/')
       .split('#')[0]
       .split('/')
       .pop()
       ?.replace(/\.(md|mdp)$/i, '')
-      .toLowerCase() ?? '';
+      .trim() ?? '';
+
+    return normalized.replace(/^`(.+)`$/, '$1').trim();
+  }
+
+  function normalizeInternalLinkTarget(target: string) {
+    return titleForInternalLinkTarget(target)
+      .trim()
+      .toLowerCase();
   }
 </script>
 
@@ -2215,6 +2240,8 @@
               <MarkdownPlusEditor
                 value={liveBody}
                 ariaLabel="MarkdownPlus body"
+                {internalLinkExists}
+                {internalLinkSignature}
                 onChange={updateLiveBody}
                 onInternalLink={(target) => void openInternalLinkTarget(target)}
                 onExternalLink={openExternalLinkTarget}
@@ -3649,11 +3676,22 @@
     text-decoration: none;
   }
 
+  .markdown-preview :global(.mdp-missing-internal-link) {
+    background: rgba(91, 117, 111, 0.12);
+    color: #85a79d;
+  }
+
   .markdown-preview :global(.mdp-internal-link:hover),
   .markdown-preview :global(.mdp-internal-link:focus) {
     background: rgba(79, 189, 160, 0.16);
     color: #c4f5e5;
     text-decoration: underline;
+  }
+
+  .markdown-preview :global(.mdp-missing-internal-link:hover),
+  .markdown-preview :global(.mdp-missing-internal-link:focus) {
+    background: rgba(91, 117, 111, 0.2);
+    color: #a2c2b8;
   }
 
   .markdown-preview :global(.mdp-inline-tag) {
