@@ -141,20 +141,20 @@
         textUnderlineOffset: '0.12em',
         cursor: 'pointer'
       },
-      '.cm-mdp-internal-link': {
+      '.cm-mdp-internal-link, .cm-mdp-internal-link *': {
         borderRadius: '4px',
         padding: '0 0.12rem',
-        color: '#8bd5bd',
-        textDecoration: 'none'
+        color: '#8bd5bd !important',
+        textDecoration: 'none !important'
       },
-      '.cm-mdp-missing-internal-link': {
-        color: '#6f827c'
+      '.cm-mdp-missing-internal-link, .cm-mdp-missing-internal-link *': {
+        color: '#6f827c !important'
       },
-      '.cm-mdp-internal-link:hover, .cm-mdp-external-link:hover': {
-        color: '#c4f5e5'
+      '.cm-mdp-internal-link:hover, .cm-mdp-internal-link:hover *, .cm-mdp-external-link:hover': {
+        color: '#c4f5e5 !important'
       },
-      '.cm-mdp-missing-internal-link:hover': {
-        color: '#8da39b'
+      '.cm-mdp-missing-internal-link:hover, .cm-mdp-missing-internal-link:hover *': {
+        color: '#8da39b !important'
       },
       '.cm-mdp-editing-link': {
         color: '#4fbda0',
