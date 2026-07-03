@@ -1702,12 +1702,10 @@
   }
 
   function resolveInternalLink(target: string) {
-    const normalizedTarget = normalizeInternalLinkTarget(target);
-    return notes.find((note) =>
-      normalizeInternalLinkTarget(note.title) === normalizedTarget
-      || normalizeInternalLinkTarget(note.id) === normalizedTarget
-      || normalizeInternalLinkTarget(note.path.replace(/\\/g, '/').split('/').pop()?.replace(/\.mdp$/i, '') ?? '') === normalizedTarget
-    )?.id ?? null;
+    const normalizedTarget = normalizeFilenameStem(filenameStemFromTitle(titleForInternalLinkTarget(target)));
+    if (!normalizedTarget) return null;
+
+    return notes.find((note) => normalizeFilenameStem(notePathStem(note.path)) === normalizedTarget)?.id ?? null;
   }
 
   function internalLinkExists(target: string) {
@@ -1727,10 +1725,38 @@
     return normalized.replace(/^`(.+)`$/, '$1').trim();
   }
 
-  function normalizeInternalLinkTarget(target: string) {
-    return titleForInternalLinkTarget(target)
-      .trim()
-      .toLowerCase();
+  function notePathStem(path: string) {
+    return path
+      .replace(/\\/g, '/')
+      .split('/')
+      .pop()
+      ?.replace(/\.(md|mdp|base)$/i, '')
+      .trim() ?? '';
+  }
+
+  function normalizeFilenameStem(value: string) {
+    return value.trim().toLowerCase();
+  }
+
+  function filenameStemFromTitle(title: string) {
+    let sanitized = '';
+    let previousWasSpace = false;
+
+    for (const character of title.trim()) {
+      const replacement = /[\u0000-\u001F\u007F<>:"/\\|?*]/.test(character) ? ' ' : character;
+      if (/\s/.test(replacement)) {
+        if (!previousWasSpace) {
+          sanitized += ' ';
+          previousWasSpace = true;
+        }
+      } else {
+        sanitized += replacement;
+        previousWasSpace = false;
+      }
+    }
+
+    sanitized = sanitized.trim().replace(/^[. ]+|[. ]+$/g, '').slice(0, 96).trim().replace(/^[. ]+|[. ]+$/g, '');
+    return sanitized || 'Untitled';
   }
 </script>
 
