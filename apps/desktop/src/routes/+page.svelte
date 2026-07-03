@@ -91,6 +91,16 @@
     x: number;
     y: number;
   };
+  type InternalEmbedPreview = {
+    title: string;
+    excerpt: string;
+    exists: boolean;
+  };
+  type ExternalEmbedPreview = {
+    label: string;
+    url: string;
+    embedUrl: string | null;
+  };
 
   const minLeftPanelWidth = 150;
   const maxLeftPanelWidth = 420;
@@ -184,6 +194,8 @@
   let editorMode: EditorMode = 'live';
   let noteContextMenu: NoteContextMenu | null = null;
   let noteContextMenuElement: HTMLDivElement;
+  let embeddedNoteSources: Record<string, string> = {};
+  let loadedEmbedTargetsSignature = '';
 
   $: selectedId = selectedNoteSource?.id;
   $: selectedDocument = notes.find((note) => note.id === selectedId) ?? null;
@@ -202,12 +214,34 @@
   $: rightToolZones = buildToolZones(rightRibbonTools);
   $: leftHasHudTool = hasHudTool(leftRibbonTools);
   $: rightHasHudTool = hasHudTool(rightRibbonTools);
-  $: outlineItems = extractOutline(extractMarkdownBody(noteSource));
+  $: markdownBody = extractMarkdownBody(noteSource);
+  $: outlineItems = extractOutline(markdownBody);
+  $: embeddedTargets = extractInternalEmbedTargets(markdownBody, internalLinkSignature);
+  $: embeddedTargetsSignature = embeddedTargets.join('|');
+  $: if (embeddedTargetsSignature !== loadedEmbedTargetsSignature) {
+    loadedEmbedTargetsSignature = embeddedTargetsSignature;
+    void loadEmbeddedNoteSources(embeddedTargets);
+  }
+  $: embeddedSourceSignature = Object.entries(embeddedNoteSources)
+    .map(([id, source]) => `${id}:${source.length}:${source.slice(0, 96)}`)
+    .join('|');
   $: markdownHtml = DOMPurify.sanitize(
-    marked.parse(markdownPlusPreviewSource(extractMarkdownBody(noteSource), internalLinkSignature), {
+    marked.parse(markdownPlusPreviewSource(markdownBody, internalLinkSignature, embeddedSourceSignature), {
       async: false,
       breaks: true
-    }) as string
+    }) as string,
+    {
+      ADD_TAGS: ['iframe'],
+      ADD_ATTR: [
+        'allow',
+        'allowfullscreen',
+        'data-mdp-external-link',
+        'data-mdp-internal-link',
+        'frameborder',
+        'loading',
+        'referrerpolicy'
+      ]
+    }
   );
 
   onMount(async () => {
@@ -540,8 +574,8 @@
     return source.slice(delimiter + 4).replace(/^\r?\n+/, '');
   }
 
-  function markdownPlusPreviewSource(source: string, _internalLinkSignature = ''): string {
-    return preserveMarkdownBlankLines(renderInlineTags(renderWikiLinks(source)))
+  function markdownPlusPreviewSource(source: string, _internalLinkSignature = '', _embeddedSourceSignature = ''): string {
+    return preserveMarkdownBlankLines(renderInlineTags(renderWikiLinks(renderExternalEmbeds(source))))
       .replace(/^[ \t]*-{3,}[ \t]*$/gm, '\n<hr data-mdp-rule="underline">\n');
   }
 
@@ -568,12 +602,42 @@
   function renderWikiLinks(source: string): string {
     return source.replace(/\[\[([^\]\n]+)\]\]/g, (_match, rawLink: string) => {
       const [rawTarget, rawLabel] = rawLink.split('|');
-      const target = rawTarget.trim();
+      const isEmbed = rawTarget.trim().startsWith('!');
+      const target = isEmbed ? rawTarget.trim().slice(1).trim() : rawTarget.trim();
       const label = (rawLabel ?? rawTarget).trim();
       if (!target) return _match;
 
+      if (isEmbed) {
+        return renderInternalEmbed(target, label.replace(/^!/, '').trim() || target);
+      }
+
       const missingClass = internalLinkExists(target) ? '' : ' mdp-missing-internal-link';
       return `<a href="#${encodeURIComponent(target)}" class="mdp-internal-link${missingClass}" data-mdp-internal-link="${escapeHtml(target)}">${escapeHtml(label)}</a>`;
+    });
+  }
+
+  function renderInternalEmbed(target: string, label: string) {
+    const preview = internalEmbedForTarget(target, label);
+    const missingClass = preview.exists ? '' : ' mdp-missing-embed';
+    const excerpt = preview.excerpt
+      ? `<p>${escapeHtml(preview.excerpt)}</p>`
+      : `<p>${preview.exists ? 'Loading preview...' : 'Click to create this note.'}</p>`;
+
+    return `\n<div class="mdp-embed mdp-internal-embed${missingClass}"><a href="#${encodeURIComponent(target)}" class="mdp-embed-title" data-mdp-internal-link="${escapeHtml(target)}">${escapeHtml(preview.title)}</a>${excerpt}</div>\n`;
+  }
+
+  function renderExternalEmbeds(source: string) {
+    return source.replace(/\[!([^\]\n]+)\]\(([^)\n]+)\)/g, (_match, rawLabel: string, rawUrl: string) => {
+      const preview = externalEmbedForTarget(rawLabel, rawUrl);
+      if (!preview.url) return _match;
+      const title = escapeHtml(preview.label || preview.url);
+      const url = escapeHtml(preview.url);
+
+      if (preview.embedUrl) {
+        return `\n<div class="mdp-embed mdp-external-embed mdp-video-embed"><iframe src="${escapeHtml(preview.embedUrl)}" title="${title}" loading="lazy" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen referrerpolicy="strict-origin-when-cross-origin"></iframe><a href="${url}" data-mdp-external-link="${url}">${title}</a></div>\n`;
+      }
+
+      return `\n<div class="mdp-embed mdp-external-embed"><a class="mdp-embed-title" href="${url}" data-mdp-external-link="${url}">${title}</a><p>${url}</p></div>\n`;
     });
   }
 
@@ -1666,13 +1730,22 @@
   }
 
   async function handlePreviewClick(event: MouseEvent) {
-    const target = event.target instanceof Element
+    const internalTarget = event.target instanceof Element
       ? event.target.closest<HTMLAnchorElement>('a[data-mdp-internal-link]')
       : null;
-    if (!target) return;
+    if (internalTarget) {
+      event.preventDefault();
+      await openInternalLinkTarget(internalTarget.dataset.mdpInternalLink ?? '');
+      return;
+    }
+
+    const externalTarget = event.target instanceof Element
+      ? event.target.closest<HTMLAnchorElement>('a[data-mdp-external-link]')
+      : null;
+    if (!externalTarget) return;
 
     event.preventDefault();
-    await openInternalLinkTarget(target.dataset.mdpInternalLink ?? '');
+    openExternalLinkTarget(externalTarget.dataset.mdpExternalLink ?? externalTarget.href);
   }
 
   async function openInternalLinkTarget(target: string) {
@@ -1695,7 +1768,7 @@
   }
 
   function openExternalLinkTarget(target: string) {
-    const trimmed = target.trim();
+    const trimmed = normalizeExternalUrl(target);
     if (!trimmed) return;
 
     window.open(trimmed, '_blank', 'noopener,noreferrer');
@@ -1710,6 +1783,72 @@
 
   function internalLinkExists(target: string) {
     return Boolean(resolveInternalLink(target));
+  }
+
+  function internalEmbedForTarget(target: string, fallbackTitle = target): InternalEmbedPreview {
+    const noteId = resolveInternalLink(target);
+    if (!noteId) {
+      return {
+        title: fallbackTitle || titleForInternalLinkTarget(target),
+        excerpt: '',
+        exists: false
+      };
+    }
+
+    const note = notes.find((candidate) => candidate.id === noteId);
+    const source = noteId === selectedId ? noteSource : embeddedNoteSources[noteId];
+    return {
+      title: note?.title ?? fallbackTitle,
+      excerpt: source ? noteSourceExcerpt(source) : '',
+      exists: true
+    };
+  }
+
+  function externalEmbedForTarget(label: string, rawUrl: string): ExternalEmbedPreview {
+    const url = normalizeExternalUrl(rawUrl);
+    return {
+      label: label.trim() || url,
+      url,
+      embedUrl: youtubeEmbedUrl(url)
+    };
+  }
+
+  function extractInternalEmbedTargets(source: string, _internalLinkSignature = '') {
+    const targets = new Set<string>();
+    for (const match of source.matchAll(/\[\[!([^\]\n]+)\]\]/g)) {
+      const rawTarget = (match[1] ?? '').split('|')[0].trim();
+      if (rawTarget) targets.add(rawTarget);
+    }
+    return Array.from(targets).sort();
+  }
+
+  async function loadEmbeddedNoteSources(targets: string[]) {
+    const ids = Array.from(new Set(targets.map(resolveInternalLink).filter((id): id is string => Boolean(id))));
+    const missing = ids.filter((id) => !embeddedNoteSources[id] && id !== selectedId);
+    if (!missing.length) return;
+
+    try {
+      const loaded = await Promise.all(missing.map(async (id) => [id, (await getNoteSource(id)).source] as const));
+      embeddedNoteSources = {
+        ...embeddedNoteSources,
+        ...Object.fromEntries(loaded)
+      };
+    } catch (error) {
+      status = error instanceof Error ? error.message : String(error);
+    }
+  }
+
+  function noteSourceExcerpt(source: string) {
+    const text = extractMarkdownBody(source)
+      .replace(/```[\s\S]*?```/g, ' ')
+      .replace(/!\[[^\]]*\]\([^)]+\)/g, ' ')
+      .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+      .replace(/\[\[!?([^\]|]+)(?:\|[^\]]+)?\]\]/g, '$1')
+      .replace(/[#*_>`~-]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    return text.length > 220 ? `${text.slice(0, 217).trim()}...` : text;
   }
 
   function titleForInternalLinkTarget(target: string) {
@@ -1757,6 +1896,41 @@
 
     sanitized = sanitized.trim().replace(/^[. ]+|[. ]+$/g, '').slice(0, 96).trim().replace(/^[. ]+|[. ]+$/g, '');
     return sanitized || 'Untitled';
+  }
+
+  function normalizeExternalUrl(rawUrl: string) {
+    const trimmed = rawUrl.trim();
+    if (/^[a-z][a-z0-9+.-]*:/i.test(trimmed)) {
+      return /^(https?|mailto):/i.test(trimmed) ? trimmed : '';
+    }
+    if (/^www\./i.test(trimmed) || /^[\w.-]+\.[a-z]{2,}(?:[/:?#]|$)/i.test(trimmed)) {
+      return `https://${trimmed}`;
+    }
+    return trimmed;
+  }
+
+  function youtubeEmbedUrl(rawUrl: string) {
+    try {
+      const url = new URL(normalizeExternalUrl(rawUrl));
+      const host = url.hostname.replace(/^www\./, '').toLowerCase();
+      let videoId = '';
+
+      if (host === 'youtu.be') {
+        videoId = url.pathname.split('/').filter(Boolean)[0] ?? '';
+      } else if (host === 'youtube.com' || host === 'm.youtube.com' || host === 'music.youtube.com') {
+        if (url.pathname.startsWith('/embed/')) {
+          videoId = url.pathname.split('/').filter(Boolean)[1] ?? '';
+        } else if (url.pathname.startsWith('/shorts/')) {
+          videoId = url.pathname.split('/').filter(Boolean)[1] ?? '';
+        } else {
+          videoId = url.searchParams.get('v') ?? '';
+        }
+      }
+
+      return /^[A-Za-z0-9_-]{6,}$/.test(videoId) ? `https://www.youtube.com/embed/${videoId}` : null;
+    } catch {
+      return null;
+    }
   }
 </script>
 
@@ -2267,7 +2441,10 @@
                 value={liveBody}
                 ariaLabel="MarkdownPlus body"
                 {internalLinkExists}
+                {internalEmbedForTarget}
+                {externalEmbedForTarget}
                 {internalLinkSignature}
+                embedSignature={embeddedSourceSignature}
                 onChange={updateLiveBody}
                 onInternalLink={(target) => void openInternalLinkTarget(target)}
                 onExternalLink={openExternalLinkTarget}
@@ -3714,6 +3891,47 @@
   .markdown-preview :global(.mdp-missing-internal-link:hover),
   .markdown-preview :global(.mdp-missing-internal-link:focus) {
     color: #8da39b;
+  }
+
+  .markdown-preview :global(.mdp-embed) {
+    display: grid;
+    gap: 0.28rem;
+    max-width: 42rem;
+    border: 1px solid #26313d;
+    border-radius: 5px;
+    background: #0c1218;
+    padding: 0.58rem 0.65rem;
+    margin: 0.42rem 0;
+  }
+
+  .markdown-preview :global(.mdp-embed-title) {
+    color: #8bd5bd;
+    font-weight: 720;
+    text-decoration: none;
+  }
+
+  .markdown-preview :global(.mdp-embed-title:hover),
+  .markdown-preview :global(.mdp-embed-title:focus) {
+    color: #c4f5e5;
+    text-decoration: underline;
+  }
+
+  .markdown-preview :global(.mdp-embed p) {
+    margin: 0;
+    color: #8b96a5;
+    font-size: 0.82rem;
+  }
+
+  .markdown-preview :global(.mdp-missing-embed .mdp-embed-title) {
+    color: #6f827c;
+  }
+
+  .markdown-preview :global(.mdp-video-embed iframe) {
+    width: min(42rem, 100%);
+    aspect-ratio: 16 / 9;
+    border: 0;
+    border-radius: 4px;
+    background: #070b10;
   }
 
   .markdown-preview :global(.mdp-inline-tag) {

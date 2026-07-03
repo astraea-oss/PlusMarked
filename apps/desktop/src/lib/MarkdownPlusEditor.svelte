@@ -17,18 +17,41 @@
     type ViewUpdate
   } from '@codemirror/view';
 
+  type InternalEmbedPreview = {
+    title: string;
+    excerpt: string;
+    exists: boolean;
+  };
+  type ExternalEmbedPreview = {
+    label: string;
+    url: string;
+    embedUrl: string | null;
+  };
+
   export let value = '';
   export let ariaLabel = 'MarkdownPlus editor';
   export let onChange: (value: string) => void = () => {};
   export let onInternalLink: (target: string) => void = () => {};
   export let onExternalLink: (target: string) => void = () => {};
   export let internalLinkExists: (target: string) => boolean = () => true;
+  export let internalEmbedForTarget: (target: string, fallbackTitle?: string) => InternalEmbedPreview = (target) => ({
+    title: target,
+    excerpt: '',
+    exists: internalLinkExists(target)
+  });
+  export let externalEmbedForTarget: (label: string, url: string) => ExternalEmbedPreview = (label, url) => ({
+    label,
+    url,
+    embedUrl: null
+  });
   export let internalLinkSignature = '';
+  export let embedSignature = '';
 
   let host: HTMLDivElement;
   let view: EditorView | null = null;
   let editorValue = '';
   let lastInternalLinkSignature = '';
+  let lastEmbedSignature = '';
   const enclosingPairs: Record<string, string> = {
     '(': ')',
     '[': ']',
@@ -161,6 +184,38 @@
         textDecoration: 'underline',
         textUnderlineOffset: '0.12em'
       },
+      '.cm-mdp-embed-widget': {
+        display: 'inline-grid',
+        gap: '0.18rem',
+        minWidth: 'min(22rem, 90%)',
+        maxWidth: '34rem',
+        border: '1px solid #26313d',
+        borderRadius: '5px',
+        backgroundColor: '#0c1218',
+        padding: '0.44rem 0.52rem',
+        color: '#aeb8c4',
+        cursor: 'pointer',
+        verticalAlign: 'middle'
+      },
+      '.cm-mdp-embed-widget:hover': {
+        borderColor: '#2ea987',
+        backgroundColor: '#0f171d'
+      },
+      '.cm-mdp-embed-title': {
+        color: '#8bd5bd',
+        fontWeight: '720'
+      },
+      '.cm-mdp-embed-excerpt': {
+        color: '#8b96a5',
+        fontSize: '0.78rem',
+        whiteSpace: 'normal'
+      },
+      '.cm-mdp-missing-embed .cm-mdp-embed-title': {
+        color: '#6f827c'
+      },
+      '.cm-mdp-external-embed-widget .cm-mdp-embed-excerpt': {
+        color: '#7d8896'
+      },
       '.cm-mdp-inline-tag': {
         border: '1px solid #245c50',
         borderRadius: '999px',
@@ -278,8 +333,9 @@
     });
   }
 
-  $: if (view && internalLinkSignature !== lastInternalLinkSignature) {
+  $: if (view && (internalLinkSignature !== lastInternalLinkSignature || embedSignature !== lastEmbedSignature)) {
     lastInternalLinkSignature = internalLinkSignature;
+    lastEmbedSignature = embedSignature;
     view.dispatch({ effects: internalLinkStateChanged.of() });
   }
 
@@ -430,12 +486,24 @@
       const matchStart = lineFrom + (match.index ?? 0);
       const matchEnd = matchStart + matchText.length;
       const pipeIndex = rawLink.indexOf('|');
-      const target = (pipeIndex === -1 ? rawLink : rawLink.slice(0, pipeIndex)).trim();
+      const rawTarget = (pipeIndex === -1 ? rawLink : rawLink.slice(0, pipeIndex)).trim();
+      const isEmbed = rawTarget.startsWith('!');
+      const target = isEmbed ? rawTarget.slice(1).trim() : rawTarget;
       if (!target) continue;
 
       if (isRangeBeingEdited(editorView, matchStart, matchEnd)) {
         decorations.push(
           Decoration.mark({ class: 'cm-mdp-editing-link' }).range(matchStart, matchEnd)
+        );
+        continue;
+      }
+
+      if (isEmbed) {
+        const label = pipeIndex === -1 ? target : rawLink.slice(pipeIndex + 1).trim();
+        decorations.push(
+          Decoration.replace({
+            widget: new InternalEmbedWidget(target, internalEmbedForTarget(target, label || target))
+          }).range(matchStart, matchEnd)
         );
         continue;
       }
@@ -467,6 +535,16 @@
       const matchEnd = matchStart + match[0].length;
       if (!label || !href || isRangeBeingEdited(editorView, matchStart, matchEnd)) {
         decorations.push(Decoration.mark({ class: 'cm-mdp-editing-link' }).range(matchStart, matchEnd));
+        continue;
+      }
+
+      if (label.trim().startsWith('!')) {
+        const embedLabel = label.trim().slice(1).trim() || href;
+        decorations.push(
+          Decoration.replace({
+            widget: new ExternalEmbedWidget(externalEmbedForTarget(embedLabel, href))
+          }).range(matchStart, matchEnd)
+        );
         continue;
       }
 
@@ -566,6 +644,87 @@
     }
 
     return false;
+  }
+
+  class InternalEmbedWidget extends WidgetType {
+    target: string;
+    preview: InternalEmbedPreview;
+
+    constructor(target: string, preview: InternalEmbedPreview) {
+      super();
+      this.target = target;
+      this.preview = preview;
+    }
+
+    eq(widget: InternalEmbedWidget) {
+      return widget.target === this.target
+        && widget.preview.title === this.preview.title
+        && widget.preview.excerpt === this.preview.excerpt
+        && widget.preview.exists === this.preview.exists;
+    }
+
+    toDOM() {
+      const card = document.createElement('span');
+      card.className = `cm-mdp-embed-widget cm-mdp-internal-embed-widget${this.preview.exists ? '' : ' cm-mdp-missing-embed'}`;
+      card.dataset.mdpInternalLink = this.target;
+      card.setAttribute('role', 'button');
+      card.setAttribute('title', this.target);
+
+      const title = document.createElement('span');
+      title.className = 'cm-mdp-embed-title';
+      title.textContent = this.preview.title;
+      card.appendChild(title);
+
+      const excerpt = document.createElement('span');
+      excerpt.className = 'cm-mdp-embed-excerpt';
+      excerpt.textContent = this.preview.excerpt || (this.preview.exists ? 'Loading preview...' : 'Click to create this note.');
+      card.appendChild(excerpt);
+
+      return card;
+    }
+
+    ignoreEvent() {
+      return false;
+    }
+  }
+
+  class ExternalEmbedWidget extends WidgetType {
+    preview: ExternalEmbedPreview;
+
+    constructor(preview: ExternalEmbedPreview) {
+      super();
+      this.preview = preview;
+    }
+
+    eq(widget: ExternalEmbedWidget) {
+      return widget.preview.label === this.preview.label
+        && widget.preview.url === this.preview.url
+        && widget.preview.embedUrl === this.preview.embedUrl;
+    }
+
+    toDOM() {
+      const card = document.createElement('span');
+      card.className = 'cm-mdp-embed-widget cm-mdp-external-embed-widget';
+      card.dataset.mdpExternalLink = this.preview.url;
+      card.setAttribute('role', 'button');
+      card.setAttribute('title', this.preview.url);
+
+      const title = document.createElement('span');
+      title.className = 'cm-mdp-embed-title';
+      title.textContent = this.preview.label;
+      card.appendChild(title);
+
+      const excerpt = document.createElement('span');
+      excerpt.className = 'cm-mdp-embed-excerpt';
+      excerpt.textContent = this.preview.embedUrl ? 'Embedded video' : this.preview.url;
+      card.appendChild(excerpt);
+
+      return card;
+    }
+
+    ignoreEvent() {
+      return false;
+    }
   }
 
   class BulletWidget extends WidgetType {
