@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte';
+  import { autocompletion, type Completion, type CompletionContext } from '@codemirror/autocomplete';
   import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
   import { markdown } from '@codemirror/lang-markdown';
   import { HighlightStyle, syntaxHighlighting } from '@codemirror/language';
@@ -27,6 +28,12 @@
     url: string;
     embedUrl: string | null;
   };
+  type LinkCompletion = {
+    label: string;
+    detail: string;
+    type: string;
+    apply?: string;
+  };
 
   export let value = '';
   export let ariaLabel = 'MarkdownPlus editor';
@@ -44,6 +51,7 @@
     url,
     embedUrl: null
   });
+  export let internalLinkCompletions: LinkCompletion[] = [];
   export let internalLinkSignature = '';
   export let embedSignature = '';
 
@@ -302,6 +310,7 @@
           markdownPlusTheme,
           syntaxHighlighting(markdownPlusHighlight),
           markdownPlusLinePlugin,
+          autocompletion({ override: [linkCompletionSource] }),
           EditorView.domEventHandlers({
             mousedown: (event, editorView) => handleEditorMouseDown(event, editorView)
           }),
@@ -342,6 +351,50 @@
   onDestroy(() => {
     view?.destroy();
   });
+
+  function linkCompletionSource(context: CompletionContext) {
+    const token = wikiLinkCompletionToken(context);
+    if (!token) return null;
+
+    const query = token.query.toLowerCase();
+    const options: Completion[] = internalLinkCompletions
+      .filter((completion) => {
+        const value = `${completion.label} ${completion.apply ?? ''} ${completion.detail}`.toLowerCase();
+        return !query || value.includes(query);
+      })
+      .slice(0, 60)
+      .map((completion) => ({
+        label: completion.label,
+        type: completion.type,
+        detail: completion.detail,
+        apply: completion.apply ?? completion.label
+      }));
+
+    if (!options.length && !context.explicit) return null;
+
+    return {
+      from: token.from,
+      options,
+      validFor: /^[^|\]\n]*$/
+    };
+  }
+
+  function wikiLinkCompletionToken(context: CompletionContext) {
+    const line = context.state.doc.lineAt(context.pos);
+    const before = line.text.slice(0, context.pos - line.from);
+    const start = before.lastIndexOf('[[');
+    if (start === -1) return null;
+
+    const content = before.slice(start + 2);
+    if (content.includes(']]') || content.includes('|') || content.includes('\n')) return null;
+
+    const isEmbed = content.startsWith('!');
+    const query = isEmbed ? content.slice(1) : content;
+    return {
+      from: line.from + start + 2 + (isEmbed ? 1 : 0),
+      query
+    };
+  }
 
   function lineDecorations(editorView: EditorView): DecorationSet {
     const decorations = [];

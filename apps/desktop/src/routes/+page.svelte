@@ -101,6 +101,12 @@
     url: string;
     embedUrl: string | null;
   };
+  type LinkCompletion = {
+    label: string;
+    detail: string;
+    type: string;
+    apply?: string;
+  };
 
   const minLeftPanelWidth = 150;
   const maxLeftPanelWidth = 420;
@@ -202,9 +208,9 @@
   $: selectedTitle = selectedDocument?.title ?? 'Untitled';
   $: selectedIsBase = selectedDocument?.note_type === 'base';
   $: internalLinkSignature = notes
-    .filter((note) => note.note_type !== 'base')
     .map((note) => `${note.id}:${note.title}:${note.path}`)
     .join('|');
+  $: internalLinkCompletions = buildInternalLinkCompletions(notes);
   $: leftPanelColumnWidth = leftPanelMode === 'ribbon' ? ribbonPanelWidth : leftPanelWidth;
   $: rightPanelColumnWidth = rightPanelMode === 'ribbon' ? ribbonPanelWidth : rightPanelWidth;
   $: ribbonTools = buildRibbonTools(toolDocks, toolAnchors, toolOrders);
@@ -1813,6 +1819,30 @@
     };
   }
 
+  function buildInternalLinkCompletions(items: NoteSummary[]): LinkCompletion[] {
+    const seen = new Set<string>();
+    const completions: LinkCompletion[] = [];
+
+    for (const item of items) {
+      const stem = notePathStem(item.path);
+      const label = stem || item.title;
+      const normalized = normalizeFilenameStem(label);
+      if (!label || seen.has(normalized)) continue;
+
+      seen.add(normalized);
+      completions.push({
+        label,
+        apply: label,
+        type: item.note_type === 'base' ? 'class' : 'text',
+        detail: item.note_type === 'base' ? 'base' : 'note'
+      });
+    }
+
+    return completions.sort((left, right) =>
+      left.detail.localeCompare(right.detail) || left.label.localeCompare(right.label)
+    );
+  }
+
   function extractInternalEmbedTargets(source: string, _internalLinkSignature = '') {
     const targets = new Set<string>();
     for (const match of source.matchAll(/\[\[!([^\]\n]+)\]\]/g)) {
@@ -1858,7 +1888,7 @@
       .split('#')[0]
       .split('/')
       .pop()
-      ?.replace(/\.(md|mdp)$/i, '')
+      ?.replace(/\.(md|mdp|base)$/i, '')
       .trim() ?? '';
 
     return normalized.replace(/^`(.+)`$/, '$1').trim();
@@ -2443,6 +2473,7 @@
                 {internalLinkExists}
                 {internalEmbedForTarget}
                 {externalEmbedForTarget}
+                {internalLinkCompletions}
                 {internalLinkSignature}
                 embedSignature={embeddedSourceSignature}
                 onChange={updateLiveBody}
